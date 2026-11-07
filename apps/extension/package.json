@@ -1,0 +1,19 @@
+{
+  "name": "tdm-extension",
+  "private": true,
+  "version": "1.2.7",
+  "license": "GPL-3.0-or-later",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "check": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "lint": "addons-linter dist/firefox"
+  },
+  "devDependencies": {
+    "addons-linter": "10.14.0",
+    "playwright-core": "1.63.0",
+    "typescript": "6.0.3",
+    "vitest": "5.0.5"
+  }
+}

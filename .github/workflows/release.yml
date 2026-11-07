@@ -1,0 +1,507 @@
+# TDM's installers, built by CI only (AGENTS.md §7).
+#
+# A pull request that changes this workflow or scripts/release builds every
+# installer and the extension, and tries them (artifacts only). A tag
+# v<version> on main does the same and makes a DRAFT GitHub release with
+# SHA256SUMS: nothing is published until the owner publishes the draft.
+#
+# TDM's signed update (ADR-0011): the draft also gets `latest.json`, which
+# names each system's update file and its signature, and `SHA256SUMS.minisig`.
+# They are signed in the release job only, in the `release` environment
+# (the owner approves each run; its secrets are the signing key and its
+# password), with the key whose public half is built into TDM
+# (apps/desktop/src-tauri/update-keys/signing.pub), checked here before
+# anything is drafted.
+#
+# Owner's decision (2026-10-25): TDM is not signed by Apple or Microsoft.
+# macOS gets an ad-hoc signature only; Windows is not signed.
+#
+# The app's own tauri.conf.json is not changed: scripts/release/
+# tauri.release.json is merged into it here (`tauri build --config`). It
+# sets the version, puts tdm-host (the app looks for it there, lib.rs
+# `host_beside`), the `tdm` command and tdm-jsbox (what yt-dlp runs as
+# QuickJS-NG; tdm-core looks for it there, video.rs `jsbox_beside`) next
+# to the program as Tauri sidecars, ships the GPL licence as a file in every installer (not as a
+# licence to agree to: the GPL asks for no acceptance) with the notices of
+# the tools TDM downloads, FFmpeg's LGPL among them (THIRD-PARTY-NOTICES.md
+# and LGPL-2.1.txt, ADR-0009's LGPL checklist, item 11), asks for the ad-hoc signature on macOS
+# and a per-user installer on Windows.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  pull_request:
+    paths: [.github/workflows/release.yml, scripts/release/**]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  version:
+    name: Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      extension_version: ${{ steps.version.outputs.extension_version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # TDM and its browser extension have independent version numbers.
+      - id: version
+        run: |
+          set -euo pipefail
+          version=$(jq -r .version scripts/release/tauri.release.json)
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::bad version $version"; exit 1; }
+          [ "$(jq -r .version apps/desktop/package.json)" = "$version" ] || { echo "::error::apps/desktop/package.json is not $version"; exit 1; }
+          [ "$(jq -r .version apps/desktop/src-tauri/tauri.conf.json)" = "$version" ] || { echo "::error::apps/desktop/src-tauri/tauri.conf.json is not $version"; exit 1; }
+          extension_version=$(jq -r .version apps/extension/package.json)
+          [[ "$extension_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::bad extension version $extension_version"; exit 1; }
+          for m in apps/extension/src/manifest.chrome.json apps/extension/src/manifest.firefox.json; do
+            [ "$(jq -r .version "$m")" = "$extension_version" ] || { echo "::error::$m is not $extension_version"; exit 1; }
+          done
+          # A release also needs, before half an hour of builds: the tag, the
+          # workspace version (`tdm --version`, the User-Agent), its
+          # CHANGELOG section and its release page.
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            [ "$GITHUB_REF_NAME" = "v$version" ] || { echo "::error::tag $GITHUB_REF_NAME does not name version $version"; exit 1; }
+            grep -qx "version = \"$version\"" Cargo.toml || { echo "::error::the workspace version in Cargo.toml is not $version"; exit 1; }
+            grep -q "^## \[$version\]" CHANGELOG.md || { echo "::error::CHANGELOG.md has no [$version] section"; exit 1; }
+            test -f "docs/releases/v$version.md" || { echo "::error::docs/releases/v$version.md is missing"; exit 1; }
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "extension_version=$extension_version" >> "$GITHUB_OUTPUT"
+          echo "TDM $version"
+          echo "Extension $extension_version"
+
+  desktop:
+    name: Installer (${{ matrix.name }})
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS
+            os: macos-latest
+            target: universal-apple-darwin
+            bundles: app,dmg
+          - name: Windows
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bundles: nsis
+          # The oldest Ubuntu the owner supports (22.04), so the programs
+          # need no newer glibc than it has.
+          - name: Linux
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            bundles: appimage,deb
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install pinned toolchain
+        run: |
+          rustup toolchain install && rustup show active-toolchain
+          if [ "${{ matrix.target }}" = universal-apple-darwin ]; then
+            rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          fi
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: |
+            .
+            apps/desktop/src-tauri
+          key: release-${{ matrix.target }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      # A slow package mirror held this step until its time ran out, twice in
+      # a row (#265; ci.yml had the same, #119, and caches its packages, but
+      # this runner image and list are not ci.yml's). Each try has its own
+      # time limit, up to three tries, and the second and third use Ubuntu's
+      # own mirror instead of Azure's. On GitHub's Ubuntu images apt reads
+      # its mirrors from /etc/apt/apt-mirrors.txt (Azure's first), and goes
+      # to the next only on an error, not on a slow one: Azure's line is
+      # taken out (review of #269).
+      - name: Install the GUI libraries (Linux)
+        if: runner.os == 'Linux'
+        # Three tries of at most 11 minutes each (12 with the time to stop),
+        # and what runs between them.
+        timeout-minutes: 45
+        env:
+          APT_OPTIONS: -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o DPkg::Lock::Timeout=60
+        run: |
+          set -euo pipefail
+          for try in 1 2 3; do
+            if [ "$try" != 1 ]; then
+              sleep 15
+              # A try cut off in the middle can leave dpkg half done.
+              sudo timeout -k 20 120 dpkg --configure -a || true
+              sudo timeout -k 20 120 apt-get $APT_OPTIONS -f install -y -q || true
+              if [ -f /etc/apt/apt-mirrors.txt ]; then
+                sudo sed -i '/azure\.archive\.ubuntu\.com/d' /etc/apt/apt-mirrors.txt
+                echo "apt's mirrors now:"; cat /etc/apt/apt-mirrors.txt
+              fi
+              # Where an image names the mirror in the sources themselves.
+              [ ! -f /etc/apt/sources.list ] || sudo sed -i 's|http://azure\.archive\.ubuntu\.com/|http://archive.ubuntu.com/|g' /etc/apt/sources.list
+              [ ! -d /etc/apt/sources.list.d ] || sudo find /etc/apt/sources.list.d -type f \( -name '*.list' -o -name '*.sources' \) \
+                -exec sed -i 's|http://azure\.archive\.ubuntu\.com/|http://archive.ubuntu.com/|g' {} +
+            fi
+            if sudo timeout -k 20 300 apt-get $APT_OPTIONS update -q \
+              && sudo timeout -k 20 360 apt-get $APT_OPTIONS install -y -q --no-install-recommends \
+                libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf file; then
+              exit 0
+            fi
+            echo "::warning::installing the GUI libraries failed (try $try of 3)"
+          done
+          exit 1
+      # The pinned QuickJS-NG, for the installed tdm-jsbox to run in the
+      # checks below: it answers `--help` through the real qjs, in its
+      # sandbox, as yt-dlp asks it. Before the build, so a download or pin
+      # problem shows at once.
+      - name: Get the pinned QuickJS-NG
+        run: |
+          set -euo pipefail
+          qjs="$(bash scripts/get-qjs.sh "$RUNNER_TEMP/quickjs")"
+          sha="$( (sha256sum < "$qjs" 2>/dev/null || shasum -a 256 < "$qjs") | cut -d' ' -f1)"
+          version="$(awk '$1 == "version" { print $2 }' tools/quickjs/pins.txt)"
+          {
+            echo "TDM_QJS=$qjs"
+            echo "TDM_QJS_SHA256=$sha"
+            echo "QJS_HELP=QuickJS-ng version ${version#v}"
+          } >> "$GITHUB_ENV"
+      # tdm-host, the program the browsers start (ADR-0005), the tdm
+      # command, and tdm-jsbox, what yt-dlp runs as QuickJS-NG for
+      # YouTube (ADR-0009: TDM looks for it next to itself), named as
+      # Tauri wants a sidecar: binaries/<name>-<target>.
+      # On macOS the build script of each processor's half wants its own
+      # file, and the bundle the universal one made from both.
+      - name: Build tdm-host, tdm and tdm-jsbox
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
+        run: |
+          set -euo pipefail
+          bin=apps/desktop/src-tauri/binaries
+          mkdir -p "$bin"
+          if [ "${{ matrix.target }}" = universal-apple-darwin ]; then
+            for t in aarch64-apple-darwin x86_64-apple-darwin; do
+              cargo build --release --locked -p tdm-host -p tdm-cli -p tdm-jsbox --target "$t"
+              for p in tdm-host tdm tdm-jsbox; do cp "target/$t/release/$p" "$bin/$p-$t"; done
+            done
+            for p in tdm-host tdm tdm-jsbox; do
+              lipo -create -output "$bin/$p-universal-apple-darwin" "$bin/$p-aarch64-apple-darwin" "$bin/$p-x86_64-apple-darwin"
+              lipo -archs "$bin/$p-universal-apple-darwin"
+            done
+          else
+            cargo build --release --locked -p tdm-host -p tdm-cli -p tdm-jsbox --target "${{ matrix.target }}"
+            ext=""; [ "$RUNNER_OS" = Windows ] && ext=".exe"
+            for p in tdm-host tdm tdm-jsbox; do
+              cp "target/${{ matrix.target }}/release/$p$ext" "$bin/$p-${{ matrix.target }}$ext"
+            done
+          fi
+          ls -l "$bin"
+      - name: Install npm packages (from the lock file only)
+        working-directory: apps/desktop
+        run: npm ci
+      - name: Build the installers
+        working-directory: apps/desktop
+        env:
+          # linuxdeploy (AppImage) runs without FUSE on the CI machine.
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          set -euo pipefail
+          npx tauri build --ci --target "${{ matrix.target }}" --bundles "${{ matrix.bundles }}" \
+            --config ../../scripts/release/tauri.release.json
+      - name: Collect the installers
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/installers"
+          mkdir -p "$out"
+          b="apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle"
+          find "$b" -maxdepth 2 -type f \( -name '*.dmg' -o -name '*-setup.exe' -o -name '*.AppImage' -o -name '*.deb' \) \
+            -exec cp {} "$out/" \;
+          if [ "$RUNNER_OS" = macOS ]; then
+            dmg=$(find "$out" -maxdepth 1 -type f -name '*.dmg' -print -quit)
+            [ -n "$dmg" ] || { echo "::error::macOS disk image is missing"; exit 1; }
+            [ "$dmg" = "$out/TDM_${VERSION}_universal.dmg" ] || \
+              mv "$dmg" "$out/TDM_${VERSION}_universal.dmg"
+          elif [ "$RUNNER_OS" = Windows ]; then
+            setup=$(find "$out" -maxdepth 1 -type f -name '*-setup.exe' -print -quit)
+            [ -n "$setup" ] || { echo "::error::Windows installer is missing"; exit 1; }
+            [ "$setup" = "$out/TDM_${VERSION}_x64-setup.exe" ] || \
+              mv "$setup" "$out/TDM_${VERSION}_x64-setup.exe"
+          else
+            deb=$(find "$out" -maxdepth 1 -type f -name '*.deb' -print -quit)
+            appimage=$(find "$out" -maxdepth 1 -type f -name '*.AppImage' -print -quit)
+            [ -n "$deb" ] || { echo "::error::Linux deb package is missing"; exit 1; }
+            [ -n "$appimage" ] || { echo "::error::Linux AppImage is missing"; exit 1; }
+            [ "$deb" = "$out/TDM_${VERSION}_amd64.deb" ] || \
+              mv "$deb" "$out/TDM_${VERSION}_amd64.deb"
+            [ "$appimage" = "$out/TDM_${VERSION}_amd64.AppImage" ] || \
+              mv "$appimage" "$out/TDM_${VERSION}_amd64.AppImage"
+          fi
+          # macOS: the update file (ADR-0011) is the app in a tar.gz, as
+          # Tauri's updater unpacks it (TDM.app at its top), without
+          # macOS's extra metadata files.
+          if [ "$RUNNER_OS" = macOS ]; then
+            COPYFILE_DISABLE=1 tar --no-mac-metadata -czf "$out/TDM_${VERSION}_universal.app.tar.gz" -C "$b/macos" "TDM.app"
+            tar -tzf "$out/TDM_${VERSION}_universal.app.tar.gz" | head -3
+          fi
+          ls -l "$out"
+          n=$(ls "$out" | wc -l)
+          expected=1; [ "$RUNNER_OS" = Linux ] && expected=2; [ "$RUNNER_OS" = macOS ] && expected=2
+          [ "$n" -eq "$expected" ] || { echo "::error::expected $expected installers, found $n"; exit 1; }
+          for f in "$out"/*; do
+            case "$(basename "$f")" in *"$VERSION"*) ;; *) echo "::error::$f does not carry $VERSION"; exit 1 ;; esac
+          done
+      # Each installer is tried on its own system: it installs, tdm-host,
+      # tdm and tdm-jsbox are next to the program, and it uninstalls.
+      - name: Try the macOS disk image
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          dmg=$(ls "$RUNNER_TEMP"/installers/*.dmg)
+          mnt=$(mktemp -d)
+          hdiutil attach -nobrowse -readonly -mountpoint "$mnt" "$dmg"
+          app="$mnt/TDM.app"
+          ls -l "$app/Contents/MacOS"
+          test -x "$app/Contents/MacOS/tdm-host"
+          test -x "$app/Contents/MacOS/tdm"
+          test -x "$app/Contents/MacOS/tdm-jsbox"
+          # `qjs --help` ends with 1 after its version.
+          { "$app/Contents/MacOS/tdm-jsbox" --help 2>&1 || true; } | tee "$RUNNER_TEMP/jsbox.txt"
+          grep -qF "$QJS_HELP" "$RUNNER_TEMP/jsbox.txt"
+          for f in LICENSE THIRD-PARTY-NOTICES.md LGPL-2.1.txt; do test -f "$app/Contents/Resources/$f"; done
+          "$app/Contents/MacOS/tdm" --version
+          # Every program in the bundle runs on both processors.
+          for f in "$app"/Contents/MacOS/*; do
+            archs=$(lipo -archs "$f")
+            echo "$(basename "$f"): $archs"
+            case "$archs" in *arm64*x86_64*|*x86_64*arm64*) ;; *) echo "::error::$f is not universal"; exit 1 ;; esac
+          done
+          # Ad-hoc, and nothing else (owner's decision).
+          codesign --verify --deep --strict "$app"
+          codesign -dv "$app" 2>&1 | tee "$RUNNER_TEMP/codesign.txt"
+          grep -q 'Signature=adhoc' "$RUNNER_TEMP/codesign.txt"
+          hdiutil detach "$mnt"
+      - name: Try the Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem "$env:RUNNER_TEMP\installers\*-setup.exe" | Select-Object -First 1
+          Start-Process -FilePath $setup.FullName -ArgumentList '/S' -Wait
+          # A per-user install goes to %LOCALAPPDATA%\TDM.
+          $dir = Join-Path $env:LOCALAPPDATA 'TDM'
+          Get-ChildItem $dir | Format-Table Name, Length
+          foreach ($f in @('tdm.exe', 'tdm-host.exe', 'tdm.exe', 'tdm-jsbox.exe', 'LICENSE', 'THIRD-PARTY-NOTICES.md', 'LGPL-2.1.txt')) {
+            if (-not (Test-Path (Join-Path $dir $f))) { throw "$f is not in $dir" }
+          }
+          # `qjs --help` ends with 1 after its version.
+          $ErrorActionPreference = 'Continue'
+          $jsbox = & (Join-Path $dir 'tdm-jsbox.exe') --help 2>&1 | Out-String
+          $ErrorActionPreference = 'Stop'
+          Write-Output $jsbox
+          if (-not $jsbox.Contains($env:QJS_HELP)) { throw "tdm-jsbox.exe did not answer --help through qjs" }
+          & (Join-Path $dir 'tdm.exe') --version
+          # `_?=` keeps the uninstaller in place, so -Wait waits for it.
+          Start-Process -FilePath (Join-Path $dir 'uninstall.exe') -ArgumentList '/S', "_?=$dir" -Wait
+          foreach ($f in @('tdm.exe', 'tdm-host.exe', 'tdm.exe', 'tdm-jsbox.exe')) {
+            if (Test-Path (Join-Path $dir $f)) { throw "$f is still there after uninstall" }
+          }
+      - name: Try the Linux package
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          deb=$(ls "$RUNNER_TEMP"/installers/*.deb)
+          dpkg-deb -c "$deb"
+          package=$(dpkg-deb -f "$deb" Package)
+          sudo apt-get install -y -q "$deb"
+          test -x /usr/bin/tdm-host
+          test -x /usr/bin/tdm
+          test -x /usr/bin/tdm-jsbox
+          # `qjs --help` ends with 1 after its version.
+          { /usr/bin/tdm-jsbox --help 2>&1 || true; } | tee "$RUNNER_TEMP/jsbox.txt"
+          grep -qF "$QJS_HELP" "$RUNNER_TEMP/jsbox.txt"
+          /usr/bin/tdm --version
+          for f in LICENSE THIRD-PARTY-NOTICES.md LGPL-2.1.txt; do dpkg -L "$package" | grep -q "/$f\$"; done
+          sudo apt-get remove -y -q "$package"
+          test ! -e /usr/bin/tdm-host
+          test ! -e /usr/bin/tdm-jsbox
+          appimage=$(ls "$RUNNER_TEMP"/installers/*.AppImage)
+          chmod +x "$appimage"
+          "$appimage" --appimage-extract >/dev/null
+          test -x squashfs-root/usr/bin/tdm-host
+          test -x squashfs-root/usr/bin/tdm
+          test -x squashfs-root/usr/bin/tdm-jsbox
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: installer-${{ matrix.name }}
+          path: ${{ runner.temp }}/installers/*
+          if-no-files-found: error
+
+  extension:
+    name: Browser extension
+    needs: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      VERSION: ${{ needs.version.outputs.extension_version }}
+    defaults:
+      run:
+        working-directory: apps/extension
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: apps/extension/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      # Firefox: the file to upload to addons.mozilla.org as "unlisted" (the
+      # owner uploads it; AMO signs it). Its linter must pass.
+      - run: npm run lint
+      # Chrome and Edge: unzipped and loaded with "Load unpacked". The
+      # manifest is at the root of each zip.
+      - name: Zip the extension
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/extension"
+          mkdir -p "$out"
+          (cd dist/chrome && zip -q -r -X "$out/TDM-Extension-Chrome-Edge-$VERSION.zip" .)
+          (cd dist/firefox && zip -q -r -X "$out/TDM-Extension-Firefox-$VERSION.zip" .)
+          for z in "$out"/*.zip; do unzip -l "$z" | grep -q ' manifest.json$'; done
+          ls -l "$out"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: extension
+          path: ${{ runner.temp }}/extension/*
+          if-no-files-found: error
+
+  release:
+    name: Draft release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [version, desktop, extension]
+    runs-on: ubuntu-latest
+    # The signing key's secrets are here only; the owner approves each run.
+    environment: release
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # Only reviewed code is released: the tag is on main's history.
+      - name: The tag is a merged commit
+        run: |
+          set -euo pipefail
+          git fetch --quiet origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || {
+            echo "::error::$GITHUB_REF_NAME is not on main: only merged code is released"; exit 1
+          }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: ${{ runner.temp }}/artifacts
+      - name: Files and SHA256SUMS
+        run: |
+          set -euo pipefail
+          r="$RUNNER_TEMP/release"
+          mkdir -p "$r"
+          find "$RUNNER_TEMP/artifacts" -type f -exec cp {} "$r/" \;
+          (cd "$r" && sha256sum -- * > SHA256SUMS && cat SHA256SUMS)
+          [ "$(wc -l < "$r/SHA256SUMS")" -eq 7 ] || { echo "::error::expected 7 files"; exit 1; }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      # Each update file and SHA256SUMS signed for this version (Tauri's
+      # signer, from the lock file), checked with minisign against the key
+      # built into TDM, then latest.json. No key yet (an empty
+      # signing.pub): no update files, the notice and release page only.
+      - name: Sign the update and write latest.json
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          r="$RUNNER_TEMP/release"
+          pub=apps/desktop/src-tauri/update-keys/signing.pub
+          if [ ! -s "$pub" ]; then
+            echo "::warning::no signing key in TDM yet: no signed update in this release"
+            exit 0
+          fi
+          [ -n "$TAURI_SIGNING_PRIVATE_KEY" ] || { echo "::error::the release environment has no TAURI_SIGNING_PRIVATE_KEY"; exit 1; }
+          (cd apps/desktop && npm ci --ignore-scripts --no-audit --no-fund)
+          sudo apt-get install -y -q --no-install-recommends minisign
+          key="$(base64 -d "$pub" | sed -n 2p)"
+          mac="TDM_${VERSION}_universal.app.tar.gz"
+          win="TDM_${VERSION}_x64-setup.exe"
+          lin="TDM_${VERSION}_amd64.AppImage"
+          for f in "$mac" "$win" "$lin" SHA256SUMS; do
+            test -f "$r/$f" || { echo "::error::$f is missing"; exit 1; }
+            (cd apps/desktop && npx tauri signer sign --app-version "$VERSION" "$r/$f" >/dev/null)
+            base64 -d "$r/$f.sig" > "$r/$f.minisig"
+            minisign -Vm "$r/$f" -x "$r/$f.minisig" -P "$key"
+          done
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}"
+          jq -n --arg v "$VERSION" --arg base "$base" \
+            --arg page "https://github.com/${GITHUB_REPOSITORY}/releases/tag/${GITHUB_REF_NAME}" \
+            --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg mac "$mac" --rawfile macsig "$r/$mac.sig" \
+            --arg win "$win" --rawfile winsig "$r/$win.sig" \
+            --arg lin "$lin" --rawfile linsig "$r/$lin.sig" '
+            {version: $v, notes: $page, pub_date: $date, platforms: {
+              "darwin-aarch64-app": {url: "\($base)/\($mac)", signature: ($macsig | rtrimstr("\n"))},
+              "darwin-x86_64-app": {url: "\($base)/\($mac)", signature: ($macsig | rtrimstr("\n"))},
+              "windows-x86_64-nsis": {url: "\($base)/\($win)", signature: ($winsig | rtrimstr("\n"))},
+              "linux-x86_64-appimage": {url: "\($base)/\($lin)", signature: ($linsig | rtrimstr("\n"))}
+            }}' > "$r/latest.json"
+          cat "$r/latest.json" | jq '.platforms | keys'
+          # Only what is published: latest.json carries the files'
+          # signatures, and SHA256SUMS.minisig is checked with minisign.
+          mv "$r/SHA256SUMS.minisig" "$RUNNER_TEMP/SHA256SUMS.minisig"
+          rm -f "$r"/*.sig "$r"/*.minisig
+          mv "$RUNNER_TEMP/SHA256SUMS.minisig" "$r/"
+          ls -l "$r"
+      # A draft: visible to the repository's maintainers only, published by
+      # the owner by hand after trying it. 0.x is a test build, so a
+      # pre-release; from 1.0 on a full release named "TDM 1.0" (owner's
+      # decision for 1.0). The update check reads /releases, which lists
+      # both.
+      - name: Draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [[ "$VERSION" == 0.* ]]; then
+            gh release create "$GITHUB_REF_NAME" --draft --prerelease --verify-tag \
+              --title "TDM $VERSION (test build)" \
+              --notes-file "docs/releases/v$VERSION.md" "$RUNNER_TEMP"/release/*
+          else
+            # 1.0.0 is "TDM 1.0"; a fix release keeps its third number.
+            title="${VERSION%.0}"
+            gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
+              --title "TDM $title" \
+              --notes-file "docs/releases/v$VERSION.md" "$RUNNER_TEMP"/release/*
+          fi

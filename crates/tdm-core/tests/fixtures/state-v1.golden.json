@@ -1,0 +1,23 @@
+{
+  "checksum": "sha256:6b4cd782c395b633024185600d75311c68e4bcd60dd5e6faf3bb6f2e79aa45a0",
+  "updated_at": "2026-10-23T10:05:12Z",
+  "segments": [
+    {
+      "done": 31457280,
+      "end": 104857599,
+      "start": 0
+    }
+  ],
+  "validator": {
+    "date": "Wed, 21 Oct 2026 08:00:00 GMT",
+    "etag": "\"abc123\"",
+    "last_modified": "Wed, 21 Oct 2026 07:28:00 GMT"
+  },
+  "url": "https://example.com/files/report.pdf",
+  "schema_version": 1,
+  "format": "tdm-state",
+  "final_url": "https://cdn.example.com/a/report.pdf",
+  "created_at": "2026-10-23T10:00:00Z",
+  "content_length": 104857600,
+  "accept_ranges": true
+}

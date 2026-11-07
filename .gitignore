@@ -1,0 +1,25 @@
+# Rust build output
+/target/
+
+# macOS metadata (incl. AppleDouble files on external drives)
+._*
+.DS_Store
+
+# Editors / OS
+.idea/
+.vscode/
+Thumbs.db
+
+# Partial downloads and state files from local manual testing
+*.tdm-part
+*.tdm-state
+
+# Never commit third-party installers (clean-room rule)
+*.exe
+*.msi
+
+# Written by the CI release-feature check when run locally
+release-features.txt
+
+# The website build (site/build.mjs)
+/site/dist/

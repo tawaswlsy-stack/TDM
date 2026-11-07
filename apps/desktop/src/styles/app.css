@@ -1,0 +1,252 @@
+/* The approved M4 design ("A: the flock", with the paste bar of B and the
+   file map of C): the icon's own blues, quiet desktop layout. Logical CSS
+   properties only, so switching to English mirrors everything. */
+@import "@fontsource/ibm-plex-sans-arabic/400.css";
+@import "@fontsource/ibm-plex-sans-arabic/500.css";
+@import "@fontsource/ibm-plex-sans-arabic/600.css";
+@import "@fontsource/ibm-plex-sans-arabic/700.css";
+
+:root {
+  --bg: #eef3f8;
+  --surface: #ffffff;
+  --sunken: #f5f8fb;
+  --toolbar-end: #eaf0f6;
+  --side: #e4ecf4;
+  --ink: #10263d;
+  /* At least 4.5:1 on every light background (axe, review of #57). */
+  --muted: #4a5d72;
+  --faint: #55687e;
+  --line: #d8e2ec;
+  --accent: #0a2b5c;
+  --accent-ink: #ffffff;
+  --feather: #2e9bff;
+  --feather-2: #8adcff;
+  --feather-bg: #dce7f2;
+  --sel: #dcebfc;
+  --amber: #8f5d00;
+  --amber-fill: #b97800;
+  --amber-bg: #fff1cc;
+  --red: #b53232;
+  --red-bg: #fbe4e4;
+  --green: #136e4b;
+  --green-fill: #17845a;
+  --green-bg: #ddf3ea;
+  --shadow: 0 1px 2px rgba(16, 38, 61, 0.06), 0 12px 32px -12px rgba(16, 38, 61, 0.25);
+  --scrim: rgba(10, 24, 40, 0.38);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #07111d;
+    --surface: #0e2034;
+    --sunken: #0b1a2b;
+    --toolbar-end: #0b1a2b;
+    --side: #0a1828;
+    --ink: #e3eef9;
+    --muted: #a3b8cf;
+    --faint: #8aa2bd;
+    --line: #1c3550;
+    --accent: #14b8cf;
+    --accent-ink: #07152b;
+    --feather: #2e9bff;
+    --feather-2: #8adcff;
+    --feather-bg: #183453;
+    --sel: #173a5c;
+    --amber: #ffc94d;
+    --amber-fill: #ffc94d;
+    --amber-bg: #3a2c08;
+    --red: #ff8a80;
+    --red-bg: #3b1518;
+    --green: #6fd9a8;
+    --green-fill: #6fd9a8;
+    --green-bg: #0f3426;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 16px 40px -12px rgba(0, 0, 0, 0.6);
+    --scrim: rgba(2, 8, 14, 0.6);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #07111d;
+  --surface: #0e2034;
+  --sunken: #0b1a2b;
+  --toolbar-end: #0b1a2b;
+  --side: #0a1828;
+  --ink: #e3eef9;
+  --muted: #a3b8cf;
+  --faint: #8aa2bd;
+  --line: #1c3550;
+  --accent: #14b8cf;
+  --accent-ink: #07152b;
+  --feather: #2e9bff;
+  --feather-2: #8adcff;
+  --feather-bg: #183453;
+  --sel: #173a5c;
+  --amber: #ffc94d;
+  --amber-fill: #ffc94d;
+  --amber-bg: #3a2c08;
+  --red: #ff8a80;
+  --red-bg: #3b1518;
+  --green: #6fd9a8;
+  --green-fill: #6fd9a8;
+  --green-bg: #0f3426;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 16px 40px -12px rgba(0, 0, 0, 0.6);
+  --scrim: rgba(2, 8, 14, 0.6);
+  color-scheme: dark;
+}
+
+/* User-selectable color templates; the system/light/dark choice remains
+   independent, so each palette follows the active contrast mode. */
+:root[data-palette="ocean"] {
+  --accent: #165fb1;
+  --accent-ink: #ffffff;
+  --feather: #2474d2;
+  --feather-2: #78b9ff;
+  --feather-bg: #deedff;
+  --sel: #dceaff;
+}
+:root[data-palette="forest"] {
+  --accent: #176b43;
+  --accent-ink: #ffffff;
+  --feather: #24865a;
+  --feather-2: #78d6a5;
+  --feather-bg: #e0f3e8;
+  --sel: #d9efdf;
+}
+:root[data-palette="sunset"] {
+  --accent: #9c3e24;
+  --accent-ink: #ffffff;
+  --feather: #c75b38;
+  --feather-2: #ffad83;
+  --feather-bg: #fae7dc;
+  --sel: #f7e2d6;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"])[data-palette="ocean"] {
+    --accent: #80b8ff;
+    --accent-ink: #08172b;
+    --feather: #80b8ff;
+    --feather-2: #b1d5ff;
+    --feather-bg: #183453;
+    --sel: #173a5c;
+  }
+  :root:not([data-theme="light"])[data-palette="forest"] {
+    --accent: #76d8a4;
+    --accent-ink: #071b12;
+    --feather: #76d8a4;
+    --feather-2: #a4e8c1;
+    --feather-bg: #123b29;
+    --sel: #16452e;
+  }
+  :root:not([data-theme="light"])[data-palette="sunset"] {
+    --accent: #ffad83;
+    --accent-ink: #26100a;
+    --feather: #ffad83;
+    --feather-2: #ffd0b6;
+    --feather-bg: #4a2519;
+    --sel: #4a2519;
+  }
+}
+:root[data-theme="dark"][data-palette="ocean"] {
+  --accent: #80b8ff;
+  --accent-ink: #08172b;
+  --feather: #80b8ff;
+  --feather-2: #b1d5ff;
+  --feather-bg: #183453;
+  --sel: #173a5c;
+}
+:root[data-theme="dark"][data-palette="forest"] {
+  --accent: #76d8a4;
+  --accent-ink: #071b12;
+  --feather: #76d8a4;
+  --feather-2: #a4e8c1;
+  --feather-bg: #123b29;
+  --sel: #16452e;
+}
+:root[data-theme="dark"][data-palette="sunset"] {
+  --accent: #ffad83;
+  --accent-ink: #26100a;
+  --feather: #ffad83;
+  --feather-2: #ffd0b6;
+  --feather-bg: #4a2519;
+  --sel: #4a2519;
+}
+
+* {
+  box-sizing: border-box;
+}
+html,
+body,
+#app {
+  margin: 0;
+  height: 100%;
+}
+body {
+  background: var(--surface);
+  color: var(--ink);
+  font: 400 14px/1.6 "IBM Plex Sans Arabic", system-ui, sans-serif;
+  overflow: hidden;
+}
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+.num {
+  font-variant-numeric: tabular-nums;
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid color-mix(in oklab, var(--line) 70%, var(--faint));
+  background: linear-gradient(var(--surface), var(--sunken));
+  padding: 5px 12px;
+  /* Desktop buttons: a little rounding, a firm edge (the owner's request). */
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+.btn.primary {
+  background: linear-gradient(color-mix(in oklab, var(--accent) 82%, white), var(--accent));
+  color: var(--accent-ink);
+  border-color: transparent;
+  font-weight: 600;
+}
+.btn.icon {
+  padding: 6px;
+  color: var(--muted);
+}
+.btn.quiet {
+  border-color: transparent;
+  background: none;
+}
+.btn.quiet:hover:not(:disabled) {
+  border-color: var(--line);
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}

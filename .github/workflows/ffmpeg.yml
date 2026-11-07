@@ -1,0 +1,223 @@
+name: FFmpeg
+
+# Builds the ffmpeg and ffprobe that TDM downloads on first video use
+# (ADR-0009): FFmpeg's official source, signature and SHA-256 checked, LGPL,
+# remux plus FFmpeg's own AAC encoder, on every system TDM runs on. Also
+# builds the test-only ffmpeg-testgen, cached and never released.
+#
+# Publishing a release is .github/workflows/ffmpeg-release.yml, which
+# calls this one. ci.yml's video tests take the released ffmpeg and
+# ffprobe, and ffmpeg-testgen from the cache this workflow fills (ADR-0009,
+# section 8): it is rebuilt only when the FFmpeg source, its options, the
+# build script or this workflow change, or when the weekly run finds it
+# gone from main's cache.
+on:
+  # main; a PR is built through `pull_request`, once. The pins and the
+  # README change no build (review of #172).
+  push:
+    branches: [main]
+    paths:
+      - tools/ffmpeg/**
+      - "!tools/ffmpeg/pins-*.txt"
+      - "!tools/ffmpeg/README.md"
+      - .github/workflows/ffmpeg.yml
+  pull_request:
+    paths:
+      - tools/ffmpeg/**
+      - "!tools/ffmpeg/pins-*.txt"
+      - "!tools/ffmpeg/README.md"
+      - .github/workflows/ffmpeg.yml
+  # Weekly on main, the day before ci.yml's weekly run: ffmpeg-testgen is
+  # built again if main's cache lost it, and the build is checked on the
+  # runners' new images (review of #172).
+  schedule:
+    - cron: "17 3 * * 0"
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+# As in ci.yml: a PR's newer commit cancels its older run, and every other
+# run (main's, which fill the cache, and the release's) has its own group,
+# so none is cancelled or kept waiting (review of #228).
+concurrency:
+  group: ffmpeg-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  source:
+    name: Source (signature and SHA-256)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: bash tools/ffmpeg/get-source.sh "$RUNNER_TEMP/source"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ffmpeg-source
+          path: ${{ runner.temp }}/source
+          if-no-files-found: error
+
+  build:
+    name: Build (${{ matrix.platform }})
+    needs: source
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Built on the oldest supported Ubuntu, so it runs on glibc 2.35+.
+          - { platform: linux-x86_64, os: ubuntu-22.04 }
+          - { platform: linux-aarch64, os: ubuntu-22.04-arm }
+          - { platform: macos-universal, os: macos-latest }
+          - { platform: windows-x86_64, os: windows-latest, msystem: UCRT64, cc: gcc }
+          - { platform: windows-aarch64, os: windows-11-arm, msystem: CLANGARM64, cc: clang }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ffmpeg-source
+          path: ${{ runner.temp }}/source
+      - name: Install MSYS2 (Windows)
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0
+        with:
+          msystem: ${{ matrix.msystem }}
+          update: false
+          pacboy: >-
+            ${{ matrix.cc }}:p
+            make:
+            diffutils:
+      # The test-only build, rebuilt only when its key changes or the cache
+      # lost it. Its own name and folder: it is never released.
+      - name: Restore ffmpeg-testgen
+        id: testgen
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: test-tools/ffmpeg-testgen
+          key: ffmpeg-testgen-${{ matrix.platform }}-${{ hashFiles('tools/ffmpeg/source.env', 'tools/ffmpeg/configure-testgen.txt', 'tools/ffmpeg/build.sh', '.github/workflows/ffmpeg.yml') }}
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        env:
+          TESTGEN_HIT: ${{ steps.testgen.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          . tools/ffmpeg/source.env
+          tarball="$RUNNER_TEMP/source/$FFMPEG_TARBALL"
+          bash tools/ffmpeg/build.sh dist "$tarball" out
+          [ "$TESTGEN_HIT" = true ] || bash tools/ffmpeg/build.sh testgen "$tarball" test-tools/ffmpeg-testgen
+      - name: Build (macOS, arm64 and x86_64 in one file)
+        if: runner.os == 'macOS'
+        env:
+          TESTGEN_HIT: ${{ steps.testgen.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          . tools/ffmpeg/source.env
+          tarball="$RUNNER_TEMP/source/$FFMPEG_TARBALL"
+          for arch in arm64 x86_64; do
+            TDM_FFMPEG_EXTRA="--arch=$arch
+          --enable-cross-compile
+          --target-os=darwin
+          --extra-cflags=-arch $arch -mmacosx-version-min=11.0
+          --extra-ldflags=-arch $arch -mmacosx-version-min=11.0" \
+              bash tools/ffmpeg/build.sh dist "$tarball" "out-$arch"
+            if [ "$TESTGEN_HIT" != true ]; then
+              TDM_FFMPEG_EXTRA="--arch=$arch
+          --enable-cross-compile
+          --target-os=darwin
+          --extra-cflags=-arch $arch -mmacosx-version-min=11.0
+          --extra-ldflags=-arch $arch -mmacosx-version-min=11.0" \
+                bash tools/ffmpeg/build.sh testgen "$tarball" "testgen-$arch"
+            fi
+          done
+          mkdir -p out test-tools/ffmpeg-testgen
+          for tool in ffmpeg ffprobe; do
+            lipo -create "out-arm64/$tool" "out-x86_64/$tool" -output "out/$tool"
+            lipo -info "out/$tool"
+          done
+          # Ad-hoc signed (codesign -s -), never signed by Apple: the owner's
+          # decision (ADR-0009, section 2). TDM is to pin
+          # the SHA-256 and check it before every run, and its tools carry no
+          # quarantine mark, so Gatekeeper does not stop them.
+          codesign --force --sign - out/ffmpeg out/ffprobe
+          for tool in ffmpeg ffprobe; do
+            codesign --verify --strict "out/$tool"
+            info="$(codesign --display --verbose=2 "out/$tool" 2>&1)"
+            grep -q '^Signature=adhoc$' <<< "$info" || { echo "::error::out/$tool is not ad-hoc signed"; echo "$info"; exit 1; }
+          done
+          # One build file for the universal binaries: both configure lines.
+          { cat out-arm64/ffmpeg-build.txt; echo; cat out-x86_64/ffmpeg-build.txt; } > out/ffmpeg-build.txt
+          if [ "$TESTGEN_HIT" != true ]; then
+            for tool in ffmpeg-testgen ffprobe-testgen; do
+              lipo -create "testgen-arm64/$tool" "testgen-x86_64/$tool" -output "test-tools/ffmpeg-testgen/$tool"
+            done
+          fi
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        env:
+          TESTGEN_HIT: ${{ steps.testgen.outputs.cache-hit }}
+          CC: ${{ matrix.cc }}
+          # Static, so ffmpeg.exe needs no MinGW DLL next to it.
+          TDM_FFMPEG_EXTRA: |-
+            --cc=${{ matrix.cc }}
+            --extra-ldflags=-static
+            --enable-w32threads
+            --disable-pthreads
+        run: |
+          set -euo pipefail
+          . tools/ffmpeg/source.env
+          tarball="$(cygpath -u "$RUNNER_TEMP")/source/$FFMPEG_TARBALL"
+          bash tools/ffmpeg/build.sh dist "$tarball" out
+          [ "$TESTGEN_HIT" = true ] || bash tools/ffmpeg/build.sh testgen "$tarball" test-tools/ffmpeg-testgen
+          # Only Windows' own DLLs, none from MinGW or MSYS2: the files run
+          # on a plain Windows (objdump is MSYS2's).
+          bash tools/ffmpeg/check-linked.sh out
+      # What the real files load, on Linux and macOS (Windows: above).
+      - name: Linked libraries
+        if: runner.os != 'Windows'
+        run: bash tools/ffmpeg/check-linked.sh out
+      - name: Smoke test
+        run: bash tools/ffmpeg/smoke-test.sh out test-tools/ffmpeg-testgen
+      # The same test on the x86_64 half: under Rosetta a universal program
+      # started from an x86_64 one runs its x86_64 half.
+      - name: Smoke test (macOS, the x86_64 half under Rosetta)
+        if: runner.os == 'macOS'
+        run: TDM_EXPECT_ARCH=x86_64 arch -x86_64 /bin/bash tools/ffmpeg/smoke-test.sh out test-tools/ffmpeg-testgen
+      - name: Sizes and SHA-256
+        run: |
+          set -euo pipefail
+          {
+            echo "### ${{ matrix.platform }}"
+            echo
+            echo "| File | Bytes | MiB | SHA-256 |"
+            echo "|---|---|---|---|"
+            for f in out/ffmpeg* out/ffprobe*; do
+              case "$f" in *.txt) continue ;; esac
+              bytes="$(wc -c < "$f" | tr -d ' ')"
+              mib="$(awk -v b="$bytes" 'BEGIN { printf "%.2f", b / 1048576 }')"
+              sum="$( (sha256sum "$f" 2>/dev/null || shasum -a 256 "$f") | cut -d' ' -f1)"
+              echo "| $(basename "$f") | $bytes | $mib | \`$sum\` |"
+            done
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ffmpeg-${{ matrix.platform }}
+          path: out
+          if-no-files-found: error
+      # The test-only build, to look at (ci.yml takes it from the cache):
+      # never in a release (ffmpeg-release.yml takes only the ffmpeg-*
+      # artifacts).
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: testgen-${{ matrix.platform }}
+          path: test-tools/ffmpeg-testgen
+          if-no-files-found: error

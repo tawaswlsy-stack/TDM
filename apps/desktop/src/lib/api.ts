@@ -1,0 +1,242 @@
+// The commands of the Rust side (src-tauri/src/lib.rs). The types are
+// generated from Rust (ts-rs), so both sides agree. The calls of the UI
+// tests are in ../uitest/api.ts, never in a release build.
+import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import type { FinishView } from "./bindings/FinishView";
+import type { IntegrationView } from "./bindings/IntegrationView";
+import type { AddRequest } from "./bindings/AddRequest";
+import type { DetailsView } from "./bindings/DetailsView";
+import type { StartedView } from "./bindings/StartedView";
+import type { PendingLink } from "./bindings/PendingLink";
+import type { Sounds } from "./bindings/Sounds";
+import type { AddPrefs } from "./bindings/AddPrefs";
+import type { ProbeView } from "./bindings/ProbeView";
+import type { InfoStart } from "./bindings/InfoStart";
+import type { OfferView } from "./bindings/OfferView";
+import type { ToolView } from "./bindings/ToolView";
+import type { BatchRequest } from "./bindings/BatchRequest";
+import type { BatchPreview } from "./bindings/BatchPreview";
+import type { GrabRequest } from "./bindings/GrabRequest";
+import type { GrabScan } from "./bindings/GrabScan";
+import type { GrabProgress } from "./bindings/GrabProgress";
+import type { GrabAdded } from "./bindings/GrabAdded";
+import type { VideoInfoView } from "./bindings/VideoInfoView";
+import type { VideoErrorView } from "./bindings/VideoErrorView";
+import type { ChoiceView } from "./bindings/ChoiceView";
+import type { NewVideo } from "./bindings/NewVideo";
+import type { DownloadView } from "./bindings/DownloadView";
+import type { Snapshot } from "./bindings/Snapshot";
+import type { SettingsView } from "./bindings/SettingsView";
+import type { SettingsChange } from "./bindings/SettingsChange";
+import type { CategoryView } from "./bindings/CategoryView";
+import type { ImportView } from "./bindings/ImportView";
+import type { Role } from "./bindings/Role";
+import type { ActivityEntry } from "./bindings/ActivityEntry";
+
+export const api = {
+  activityEvents: () => invoke<ActivityEntry[]>("activity_events"),
+  clearActivityEvents: () => invoke<void>("clear_activity_events"),
+  exportActivityLog: (path: string, format: "txt" | "json", entries: ActivityEntry[]) =>
+    invoke<void>("export_activity_log", { path, format, entries }),
+  onActivity: (handler: (entry: ActivityEntry) => void): Promise<UnlistenFn> =>
+    listen<ActivityEntry>("activity-event", (event) => handler(event.payload)),
+  snapshot: () => invoke<Snapshot>("snapshot"),
+  probe: (url: string) => invoke<ProbeView>("probe", { url }),
+  guessInfo: (url: string) => invoke<ProbeView>("guess_info", { url }),
+  cancelProbe: () => invoke<void>("cancel_probe"),
+  /** The tray menu's texts, and the notification the first time the
+   * window hides into the tray. */
+  setTrayTexts: (show: string, dropBox: string, quit: string, noticeTitle: string, notice: string) =>
+    invoke<void>("set_tray_texts", { show, dropBox, quit, noticeTitle, notice }),
+  /** The drop box (M5.5): shown or not, and showing or hiding it. */
+  dropBoxShown: () => invoke<boolean>("drop_box_shown"),
+  setDropBox: (shown: boolean) => invoke<void>("set_drop_box", { shown }),
+  /** Closing the window quits TDM; and whether there is a tray. */
+  closeQuits: () => invoke<[boolean, boolean]>("close_quits"),
+  /** Which sounds play (M5.5). */
+  soundPrefs: () => invoke<Sounds>("sound_prefs"),
+  /** How a new download shows (M5.5): its progress window, and starting
+   * while «Download file info» is open. */
+  addPrefs: () => invoke<AddPrefs>("add_prefs"),
+  setAddPrefs: (prefs: AddPrefs) => invoke<void>("set_add_prefs", { prefs }),
+  openStartedProgress: (id: number, title: string) => invoke<void>("open_started_progress", { id, title }),
+  setItemDetails: (id: number, category: string | null, description: string | null) =>
+    invoke<void>("set_item_details", { id, category, description }),
+  setSoundPrefs: (sounds: Sounds) => invoke<void>("set_sound_prefs", { sounds }),
+  setCloseQuits: (quits: boolean) => invoke<void>("set_close_quits", { quits }),
+  /** The page heard the «quit» a close sent: TDM waits for its answer. */
+  quitHeard: () => invoke<void>("quit_heard"),
+  add: (request: AddRequest) => invoke<number>("add", { request }),
+  pause: (ids: number[]) => invoke<void>("pause", { ids }),
+  resume: (ids: number[]) => invoke<void>("resume", { ids }),
+  remove: (ids: number[]) => invoke<void>("remove", { ids }),
+  details: (id: number) => invoke<DetailsView>("details", { id }),
+  settings: () => invoke<SettingsView>("settings"),
+  saveSettings: (change: SettingsChange) => invoke<SettingsView>("save_settings", { change }),
+  categories: () => invoke<CategoryView[]>("categories"),
+  saveCategories: (categories: CategoryView[]) => invoke<CategoryView[]>("save_categories", { categories }),
+  tryCategory: (categories: CategoryView[], name: string) =>
+    invoke<string | null>("try_category", { categories, name }),
+  exportQueues: (path: string) => invoke<void>("export_queues", { path }),
+  importQueues: (path: string, keepFolders: boolean) =>
+    invoke<ImportView>("import_queues", { path, keepFolders }),
+  onChange: (handler: () => void): Promise<UnlistenFn> => listen("downloads-changed", handler),
+  /** A progress tick: the running downloads' rows only (`lib/progressRows.ts`). */
+  onProgress: (handler: (rows: DownloadView[]) => void): Promise<UnlistenFn> =>
+    listen<DownloadView[]>("downloads-progress", (event) => handler(event.payload)),
+  showWindow: () => invoke<void>("show_window"),
+  fixBrowserIntegration: () => invoke<IntegrationView>("fix_browser_integration"),
+  browserIntegration: () => invoke<IntegrationView | null>("browser_integration"),
+  /** "Refresh the download link" (M5); refused with a `RefreshProblem`. */
+  refreshLink: (id: number, url: string) => invoke<void>("refresh_link", { id, url }),
+  /** Gives up that refresh (its dialog was closed). */
+  cancelRefresh: (id: number) => invoke<void>("cancel_refresh", { id }),
+  /** A download that waits for its browser goes on without its cookies. */
+  goWithoutCookies: (id: number) => invoke<void>("go_without_cookies", { id }),
+  /** The macOS menu bar (M5.5): the page's menus in its language. */
+  setMenu: (appName: string, menus: unknown[], system: Record<string, string>) =>
+    invoke<void>("set_menu", { appName, menus, system }),
+  /** A command chosen in the macOS menu bar. */
+  onMenuCommand: (handler: (command: string) => void): Promise<UnlistenFn> =>
+    listen<string>("menu-command", (event) => handler(event.payload)),
+  quitApp: () => invoke<void>("quit_app"),
+  appVersion: () => invoke<string>("app_version"),
+  /** «Copy problem info»: what a report needs, on the clipboard. */
+  copyProblemInfo: () => invoke<void>("copy_problem_info"),
+  /** Opens a finished download (`folder` false) or shows its folder. */
+  /** `false`: the file can run code, and opens only once the user is
+   * `sure`. */
+  openDownload: (id: number, folder: boolean, sure = false) => invoke<boolean>("open_download", { id, folder, sure }),
+  /** Takes downloads off the list and deletes their unfinished files. */
+  removeWithFiles: (ids: number[]) => invoke<void>("remove_with_files", { ids }),
+  moveToQueue: (ids: number[], queue: string) => invoke<void>("move_to_queue", { ids, queue }),
+  /** Video downloads into `queue` (null: the videos' own list). */
+  videoSetQueue: (ids: number[], queue: string | null) => invoke<void>("video_set_queue", { ids, queue }),
+  /** «Copy link»: the downloads' links on the clipboard; how many went. */
+  copyLinks: (ids: number[]) => invoke<number>("copy_links", { ids }),
+  /** The add windows (M5.5): «Add a link», with a link or none, titled in
+   * the page's language. */
+  openAddLink: (url: string | null, fromClipboard: boolean, title: string) =>
+    invoke<void>("open_add_link", { url, fromClipboard, title }),
+  pendingLink: () => invoke<PendingLink | null>("pending_link"),
+  /** A link copied while «Add a link» is open. */
+  onPendingLink: (handler: (link: PendingLink) => void): Promise<UnlistenFn> =>
+    listen<PendingLink>("pending-link", (event) => handler(event.payload)),
+  /** «Download file info» for `url`; «Add a link» closes. */
+  openAddInfo: (url: string, title: string) => invoke<void>("open_add_info", { url, title }),
+  /** What this «Download file info» window is for. */
+  pendingInfo: () => invoke<InfoStart | null>("pending_info"),
+  /** A download from the browser: what TDM learned of the file, once it
+   * has reached it. */
+  offerAnswer: (offer: number) => invoke<OfferView>("offer_answer", { offer }),
+  /** Adds a download from the browser as its window says; `early`: started
+   * in the background while the window is open. */
+  addOffer: (offer: number, request: AddRequest, early: boolean) => invoke<number>("add_offer", { offer, request, early }),
+  /** A download's progress window (M5.5), titled `title` until it names
+   * itself. */
+  openProgress: (id: number, title: string) => invoke<void>("open_progress", { id, title }),
+  /** A download's own speed limit, bytes per second; `null`: none. */
+  setLimit: (id: number, limit: number | null) => invoke<void>("set_limit", { id, limit }),
+  /** The add window that asks becomes `height` tall (logical pixels), and
+   * no shorter; `page`: the page's own height now. */
+  fitWindow: (height: number, page: number) => invoke<void>("fit_window", { height, page }),
+  /** The role of this window, made beforehand and hidden: `null` until it
+   * takes one. */
+  windowRole: () => invoke<Role | null>("window_role"),
+  /** Only this window's role: a plain `listen` hears every window's. */
+  onWindowRole: (handler: (role: Role) => void): Promise<UnlistenFn> =>
+    getCurrentWebviewWindow().listen<Role>("window-role", (event) => handler(event.payload)),
+  /** «Download file info» started download `id` in the background: closing
+   * the window without placing it removes it with its files. */
+  holdStarted: (id: number) => invoke<void>("hold_started", { id }),
+  /** The download this window started goes to `folder` under `name` (each
+   * `null`: as it is), then runs on (`start`) or waits paused. */
+  placeStarted: (folder: string | null, name: string | null, start: boolean, connections: number | null) =>
+    invoke<number>("place_started", { folder, name, start, connections }),
+  /** This window's page drew its first frame (timed with `TDM_MEASURE=1`). */
+  windowPainted: () => invoke<void>("window_painted"),
+  windowReady: () => invoke<void>("window_ready"),
+  /** The settings window (a window of its own), titled `title`. */
+  openSettings: (title: string) => invoke<void>("open_settings", { title }),
+  /** Saved in any window: every window follows. */
+  onSettingsChanged: (handler: (settings: SettingsView) => void): Promise<UnlistenFn> =>
+    listen<SettingsView>("settings-changed", (event) => handler(event.payload)),
+  /** The proxy every download goes through (`null`: none); a change
+   * applies when TDM next starts. */
+  proxySetting: () => invoke<string | null>("proxy_setting"),
+  setProxy: (proxy: string | null) => invoke<void>("set_proxy", { proxy }),
+  /** What a progress window does when its download finishes, for all. */
+  finishSetting: () => invoke<FinishView>("finish_setting"),
+  setFinishSetting: (finish: FinishView) => invoke<void>("set_finish_setting", { finish }),
+  /** How many video downloads run at once, 1 to 8. */
+  videosAtOnce: () => invoke<number>("videos_at_once_setting"),
+  setVideosAtOnce: (n: number) => invoke<void>("set_videos_at_once", { n }),
+  /** Closes the window that asks. */
+  closeWindow: () => invoke<void>("close_window"),
+  /** The main window, on `view` («New category»: the categories). */
+  showMainView: (view: string) => invoke<void>("show_main_view", { view }),
+  onMainView: (handler: (view: string) => void): Promise<UnlistenFn> =>
+    listen<string>("main-view", (event) => handler(event.payload)),
+  /** Video downloads (M6, #149). */
+  openVideo: (url: string | null) => invoke<void>("open_video", { url }),
+  /** «Batch download» (M7): opened with a link or none; its links shown
+   * before anything is added; then added to a queue, started or not. */
+  openBatch: (url: string | null) => invoke<void>("open_batch", { url }),
+  batchPending: () => invoke<string | null>("batch_pending"),
+  batchPreview: (request: BatchRequest) => invoke<BatchPreview>("batch_preview", { request }),
+  batchAdd: (request: BatchRequest, queue: string | null, folder: string | null, start: boolean) =>
+    invoke<number>("batch_add", { request, queue, folder, start }),
+  /** «Site grabber» (M7): opened with a start link or none; «Check» lists
+   * the files (with `grab-progress` as it goes); the files kept go to the
+   * site's own queue, named by the check's id and the places taken out. */
+  openGrab: (url: string | null) => invoke<void>("open_grab", { url }),
+  grabPending: () => invoke<string | null>("grab_pending"),
+  grabCheck: (request: GrabRequest) => invoke<GrabScan>("grab_check", { request }),
+  grabCancel: () => invoke<void>("grab_cancel"),
+  grabAdd: (id: number, removed: number[], folder: string | null, start: boolean) =>
+    invoke<GrabAdded>("grab_add", { id, removed, folder, start }),
+  onGrabProgress: (handler: (p: GrabProgress) => void): Promise<UnlistenFn> =>
+    listen<GrabProgress>("grab-progress", (e) => handler(e.payload)),
+  /** The clipboard's link, if it holds one. */
+  clipboardLink: () => invoke<string | null>("clipboard_link"),
+  videoPending: () => invoke<string | null>("video_pending"),
+  videoFolder: () => invoke<string>("video_folder"),
+  videoToolsStatus: () => invoke<ToolView[]>("video_tools_status"),
+  videoToolsInstall: () => invoke<void>("video_tools_install"),
+  videoToolsCancel: () => invoke<void>("video_tools_cancel"),
+  videoToolsRemove: () => invoke<void>("video_tools_remove"),
+  videoProbe: (url: string) => invoke<VideoInfoView>("video_probe", { url }),
+  videoProbeCancel: () => invoke<void>("video_probe_cancel"),
+  /** «Video quality» is open: a video waits for its quality. */
+  videoWindowOpen: () => invoke<boolean>("video_window_open"),
+  /** Brings «Video quality» to the front. */
+  showVideoWindow: () => invoke<void>("show_video_window"),
+  onVideoWindow: (handler: (open: boolean) => void): Promise<UnlistenFn> => listen<boolean>("video-window", (e) => handler(e.payload)),
+  videoDownload: (url: string, choice: ChoiceView, dest: string, name: string, queue: string | null = null) =>
+    invoke<number>("video_download", { url, choice, dest, name, queue }),
+  videoAddMany: (page: string, items: NewVideo[], dest: string, queue: string | null = null) =>
+    invoke<number[]>("video_add_many", { page, items, dest, queue }),
+  videoCancel: (id: number) => invoke<void>("video_cancel", { id }),
+  /** The download a format chosen in the browser started, while «Video
+   * quality» asks where it goes. */
+  videoStarted: () => invoke<StartedView | null>("video_started"),
+  onVideoStarted: (handler: (id: number) => void): Promise<UnlistenFn> => listen<number>("video-started", (e) => handler(e.payload)),
+  videoKeep: (id: number, folder: string, name: string, queue: string | null = null) =>
+    invoke<void>("video_keep", { id, folder, name, queue }),
+  videoDiscard: (id: number) => invoke<void>("video_discard", { id }),
+  videoLater: (id: number, folder: string, name: string, queue: string | null = null) =>
+    invoke<void>("video_later", { id, folder, name, queue }),
+  onVideoToolsProgress: (handler: (p: { tool: string; done: number; total: number | null }) => void): Promise<UnlistenFn> =>
+    listen<{ tool: string; done: number; total: number | null }>("video-tools-progress", (e) => handler(e.payload)),
+  onVideoProgress: (handler: (p: { id: number; done: number; total: number | null; speed: number | null }) => void): Promise<UnlistenFn> =>
+    listen<{ id: number; done: number; total: number | null; speed: number | null }>("video-progress", (e) => handler(e.payload)),
+  onVideoFinished: (handler: (p: { id: number; file: string }) => void): Promise<UnlistenFn> =>
+    listen<{ id: number; file: string }>("video-finished", (e) => handler(e.payload)),
+  onVideoFailed: (handler: (p: { id: number; error: VideoErrorView }) => void): Promise<UnlistenFn> =>
+    listen<{ id: number; error: VideoErrorView }>("video-failed", (e) => handler(e.payload)),
+  /** Clipboard monitoring (M5): a download link the user copied. */
+  onClipboardLink: (handler: (url: string) => void): Promise<UnlistenFn> =>
+    listen<string>("clipboard-link", (event) => handler(event.payload)),
+};

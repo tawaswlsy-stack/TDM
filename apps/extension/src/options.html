@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title data-i18n="optionsTitle">TDM</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <main>
+      <h1 data-i18n="optionsTitle">TDM</h1>
+      <form id="settings">
+        <label class="choice">
+          <input type="checkbox" id="capture" />
+          <span data-i18n="optionsCapture"></span>
+        </label>
+        <label class="choice">
+          <input type="checkbox" id="all-downloads" aria-describedby="all-downloads-hint" />
+          <span data-i18n="optionsAllDownloads"></span>
+        </label>
+        <p class="hint" id="all-downloads-hint" data-i18n="optionsAllDownloadsHint"></p>
+        <label for="extensions" data-i18n="optionsExtensions"></label>
+        <p class="hint" id="extensions-hint" data-i18n="optionsExtensionsHint"></p>
+        <textarea id="extensions" rows="4" dir="ltr" spellcheck="false" aria-describedby="extensions-hint"></textarea>
+        <div class="size-row">
+          <label class="choice">
+            <input type="checkbox" id="big-files" aria-describedby="big-files-hint" />
+            <span id="big-files-label" data-i18n="optionsBigFiles"></span>
+          </label>
+          <input type="number" id="big-file-mb" min="1" max="100000" step="1" required aria-labelledby="big-files-label big-files-unit" aria-describedby="big-files-hint" />
+          <span id="big-files-unit" data-i18n="optionsBigFilesUnit"></span>
+        </div>
+        <p class="hint" id="big-files-hint" data-i18n="optionsBigFilesHint"></p>
+        <label for="sites" data-i18n="optionsSites"></label>
+        <p class="hint" id="sites-hint" data-i18n="optionsSitesHint"></p>
+        <textarea id="sites" rows="4" dir="ltr" spellcheck="false" aria-describedby="sites-hint"></textarea>
+        <fieldset aria-describedby="keys-hint">
+          <legend data-i18n="keysTitle"></legend>
+          <label class="choice">
+            <input type="checkbox" id="use-keys" aria-describedby="keys-warning" />
+            <span data-i18n="keysUse"></span>
+          </label>
+          <p class="hint" id="keys-warning" data-i18n="keysWarning"></p>
+          <p class="hint" id="keys-hint" data-i18n="keysHint"></p>
+          <label for="send-keys" data-i18n="keysSend"></label>
+          <select id="send-keys"></select>
+          <label for="browser-keys" data-i18n="keysBrowser"></label>
+          <select id="browser-keys"></select>
+        </fieldset>
+        <div class="row">
+          <button type="submit" data-i18n="optionsSave"></button>
+          <button type="button" id="reset" data-i18n="optionsReset"></button>
+          <output id="saved" role="status"></output>
+        </div>
+      </form>
+      <section aria-labelledby="cookies-title">
+        <h2 id="cookies-title" data-i18n="cookiesTitle"></h2>
+        <p data-i18n="cookiesWhy"></p>
+        <ul>
+          <li data-i18n="cookiesOnlyHere"></li>
+          <li data-i18n="cookiesOnlyThisSite"></li>
+          <li data-i18n="cookiesNotKept"></li>
+          <li data-i18n="sitesVideo"></li>
+          <li data-i18n="sitesKeys"></li>
+          <li data-i18n="cookiesOptional"></li>
+        </ul>
+        <p class="hint" data-i18n="cookiesPrompt"></p>
+        <div class="row">
+          <button type="button" id="allow" data-i18n="cookiesAllow"></button>
+          <button type="button" id="drop" data-i18n="cookiesDrop"></button>
+          <output id="cookies-state" role="status" aria-live="polite"></output>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="options.js"></script>
+  </body>
+</html>

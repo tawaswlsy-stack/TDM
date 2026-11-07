@@ -1,0 +1,664 @@
+//! `tdm`: download and resume from the command line.
+//!
+//! A thin layer over `tdm-core`: it parses arguments, shows the engine's
+//! events and maps the result to an exit code. There is deliberately no
+//! option that weakens TLS certificate checks.
+//!
+//! Messages are in English: the owner kept the command line in English in
+//! M4 (scripts read what it prints); the translations are for the GUI.
+
+#![forbid(unsafe_code)]
+
+mod batch;
+mod category;
+mod grab;
+mod queue;
+mod video;
+
+use std::io::{IsTerminal, Write};
+use std::path::{Path, PathBuf};
+use std::process::ExitCode;
+use std::time::{Duration, Instant};
+
+use clap::parser::ValueSource;
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
+use tdm_core::{
+    DEFAULT_CONNECTIONS, DEFAULT_TRIES, Engine, Error, Event, Finished, MAX_CONNECTIONS, Options,
+    RestartReason,
+};
+use tdm_platform::shell::{self, ShellCommand};
+use tdm_platform::{AppPaths, SystemPaths};
+
+/// Exit code when the download stopped but can be resumed.
+const EXIT_RESUMABLE: u8 = 3;
+/// Quit at once with a second Ctrl+C, as a shell says of a process ended by
+/// Ctrl+C (128 + SIGINT).
+const EXIT_QUIT: u8 = 130;
+
+#[derive(Debug, Parser)]
+#[command(
+    name = "tdm",
+    version,
+    about = "TDM Download Manager — command line",
+    after_help = "Exit codes: 0 done, 1 failed, 2 wrong usage, 3 stopped but resumable \
+                  (run `tdm resume <state-file>`)."
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+    /// Connections for the download, 1 to 32. A file is split only if its
+    /// server allows it.
+    #[arg(
+        short,
+        long,
+        global = true,
+        value_name = "N",
+        default_value_t = DEFAULT_CONNECTIONS as u16,
+        value_parser = clap::value_parser!(u16).range(1..=MAX_CONNECTIONS as i64)
+    )]
+    connections: u16,
+    /// How many times in a row a failing request or connection is tried
+    /// before the download stops (it can be resumed later). 1 means no
+    /// retry. The waits in between grow, and a server's Retry-After is
+    /// respected.
+    #[arg(
+        long,
+        global = true,
+        value_name = "N",
+        default_value_t = DEFAULT_TRIES,
+        value_parser = clap::value_parser!(u32).range(1..=100)
+    )]
+    tries: u32,
+    /// Where TDM keeps its queues. Defaults to the system data folder.
+    #[arg(long, global = true, value_name = "FOLDER")]
+    data_dir: Option<PathBuf>,
+}
+
+#[derive(Debug, Subcommand)]
+enum Command {
+    /// Download a file over HTTP or HTTPS.
+    Get {
+        /// The http:// or https:// URL to download.
+        url: String,
+        /// Folder to save into. Without it, the file goes to its category's
+        /// folder (see `tdm category`), or to the system Downloads folder.
+        #[arg(short, long, value_name = "FOLDER")]
+        dir: Option<PathBuf>,
+        /// With --dir: the file still goes to its category's folder, and
+        /// to --dir only when its category has no folder.
+        #[arg(long, requires = "dir")]
+        by_category: bool,
+        /// Speed limit, in bytes per second, or with K, M or G (KiB/s,
+        /// MiB/s, GiB/s), such as 500K or 1.5M.
+        #[arg(long, value_name = "RATE", value_parser = rate)]
+        limit: Option<u64>,
+    },
+    /// Continue an interrupted download from its .tdm-state file.
+    Resume {
+        /// The `<name>.tdm-state` file next to the partial download.
+        state_file: PathBuf,
+        /// Speed limit, like `tdm get --limit`.
+        #[arg(long, value_name = "RATE", value_parser = rate)]
+        limit: Option<u64>,
+        /// A new link to the same file, when the old one expired: used only
+        /// if the server shows the same size and the same strong validator
+        /// (ETag or Last-Modified); a download without one cannot take a
+        /// new link.
+        #[arg(long, value_name = "URL")]
+        link: Option<String>,
+    },
+    /// Manage and run download queues.
+    Queue {
+        #[command(subcommand)]
+        command: queue::QueueCommand,
+    },
+    /// Manage the categories that choose where downloads go.
+    Category {
+        #[command(subcommand)]
+        command: category::CategoryCommand,
+    },
+    /// Download videos (with yt-dlp and TDM's ffmpeg, downloaded only
+    /// after you agree: `tdm video tools install`).
+    Video {
+        #[command(subcommand)]
+        command: video::VideoCommand,
+    },
+    /// Download the files a pattern stands for, one after the other, such
+    /// as `img[001-100].jpg`.
+    #[command(
+        after_help = "Exit codes: 0 every file saved, 1 a file failed (a file that stopped but \
+                      can be resumed counts as failed; the resume command is printed), 2 a \
+                      wrong pattern, 3 stopped with Ctrl+C during a file that can be resumed, \
+                      130 quit at once with a second Ctrl+C."
+    )]
+    Batch(batch::BatchArgs),
+    /// Download a site's files: from one page, down to a depth, within the
+    /// site, respecting its robots.txt. One connection per file unless
+    /// --connections is given.
+    #[command(
+        after_help = "Exit codes: 0 done, 1 a file failed or stopped at a limit (the resume \
+                      command is printed), 2 a wrong request, 3 stopped with Ctrl+C, 130 quit at \
+                      once with a second Ctrl+C."
+    )]
+    Grab(grab::GrabArgs),
+}
+
+fn main() -> ExitCode {
+    let matches = Cli::command().get_matches();
+    // `tdm grab` uses one connection per file unless asked for more, not
+    // to press on the site (ADR-0010, owner's decision).
+    let connections_given = matches.value_source("connections") == Some(ValueSource::CommandLine);
+    let cli = match Cli::from_arg_matches(&matches) {
+        Ok(cli) => cli,
+        Err(err) => err.exit(),
+    };
+    let data_dir = match data_dir(cli.data_dir.as_deref()) {
+        Ok(dir) => dir,
+        Err(message) => return fail(&message),
+    };
+    let categories = tdm_core::category::CategoryStore::new(&data_dir);
+    if let Command::Category { command } = cli.command {
+        return category::manage(&categories, command);
+    }
+    if let Command::Queue { command } = cli.command {
+        let store = tdm_core::queue::QueueStore::new(&data_dir);
+        let queue::QueueCommand::Run {
+            shutdown_after,
+            sleep_after,
+            countdown,
+        } = command
+        else {
+            return queue::manage(&store, command);
+        };
+        let power = queue::PowerRequest::from_flags(shutdown_after, sleep_after, countdown);
+        let runtime = match tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(runtime) => runtime,
+            Err(err) => return fail(&format!("could not start: {err}")),
+        };
+        let engine = match Engine::new(options(cli.connections.into(), cli.tries)) {
+            Ok(engine) => engine,
+            Err(err) => return fail(&err.to_string()),
+        };
+        return runtime.block_on(queue::run(store, categories, engine, power));
+    }
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(err) => return fail(&format!("could not start: {err}")),
+    };
+    if matches!(
+        cli.command,
+        Command::Video { .. } | Command::Batch(_) | Command::Grab(_)
+    ) {
+        let connections = match cli.command {
+            Command::Grab(_) if !connections_given => 1,
+            _ => cli.connections.into(),
+        };
+        let engine = match Engine::new(options(connections, cli.tries)) {
+            Ok(engine) => engine,
+            Err(err) => return fail(&err.to_string()),
+        };
+        match cli.command {
+            Command::Video { command } => {
+                return runtime.block_on(video::run(command, &data_dir, engine));
+            }
+            Command::Batch(args) => return runtime.block_on(batch::run(engine, args)),
+            Command::Grab(args) => return runtime.block_on(grab::run(engine, args)),
+            _ => unreachable!("matched above"),
+        }
+    }
+    runtime.block_on(run(
+        cli.command,
+        &categories,
+        cli.connections.into(),
+        cli.tries,
+    ))
+}
+
+/// A speed limit given on the command line (`tdm_core::limit::parse_rate`).
+fn rate(text: &str) -> Result<u64, String> {
+    tdm_core::limit::parse_rate(text).ok_or_else(|| {
+        format!(
+            "{text:?} is not a speed: use bytes per second, or K, M or G (such as 500K or 1.5M)"
+        )
+    })
+}
+
+fn options(connections: usize, tries: u32) -> Options {
+    Options {
+        connections,
+        max_failures: tries,
+        ..Options::default()
+    }
+}
+
+/// Where the queues and categories files are: `--data-dir` or the system
+/// data folder.
+fn data_dir(chosen: Option<&Path>) -> Result<PathBuf, String> {
+    Ok(match chosen {
+        Some(dir) => dir.to_path_buf(),
+        None => SystemPaths::new()
+            .map_err(|err| err.to_string())?
+            .data_dir()
+            .to_path_buf(),
+    })
+}
+
+async fn run(
+    command: Command,
+    categories: &tdm_core::category::CategoryStore,
+    connections: usize,
+    tries: u32,
+) -> ExitCode {
+    let engine = match Engine::new(options(connections, tries)) {
+        Ok(engine) => engine,
+        Err(err) => return fail(&err.to_string()),
+    };
+    let mut progress = Progress::new();
+
+    let work = async {
+        match &command {
+            Command::Get {
+                url,
+                dir,
+                by_category,
+                limit,
+            } => {
+                let given = match download_dir(dir.as_deref()) {
+                    Ok(dir) => dir,
+                    Err(message) => return Err(Failure::Message(message)),
+                };
+                let engine = engine.with_download_limit(*limit);
+                if dir.is_some() && !by_category {
+                    // A folder given on the command line wins.
+                    return engine
+                        .download(url, &given, &mut |e| progress.show(e))
+                        .await
+                        .map_err(Failure::Engine);
+                }
+                let store = categories.clone();
+                let categories = tokio::task::spawn_blocking(move || store.load())
+                    .await
+                    .map_err(|err| Failure::Message(err.to_string()))?
+                    .map_err(|err| Failure::Message(err.to_string()))?;
+                let choose = move |name: &str, url: &tdm_core::Url| {
+                    categories.folder_for(name, url.host_str(), &given)
+                };
+                engine
+                    .download_choosing_until(url, &choose, &tdm_core::Stop::new(), &mut |e| {
+                        progress.show(e)
+                    })
+                    .await
+                    .map_err(Failure::Engine)
+            }
+            Command::Resume {
+                state_file,
+                limit,
+                link,
+            } => {
+                if let Some(link) = link {
+                    engine
+                        .refresh_link(state_file, link)
+                        .await
+                        .map_err(Failure::Engine)?;
+                }
+                engine
+                    .with_download_limit(*limit)
+                    .resume(state_file, &mut |e| progress.show(e))
+                    .await
+                    .map_err(Failure::Engine)
+            }
+            Command::Queue { .. }
+            | Command::Category { .. }
+            | Command::Video { .. }
+            | Command::Batch(_)
+            | Command::Grab(_) => {
+                unreachable!("handled in main")
+            }
+        }
+    };
+
+    let result = tokio::select! {
+        result = work => result,
+        _ = tokio::signal::ctrl_c() => Err(Failure::Cancelled),
+    };
+    progress.clear_line();
+
+    match result {
+        Ok(Finished { file, bytes }) => {
+            println!("Saved {} ({})", file.display(), human_bytes(bytes));
+            ExitCode::SUCCESS
+        }
+        Err(Failure::Engine(Error::Interrupted { state_file, reason })) => {
+            stopped(&reason, &state_file)
+        }
+        Err(Failure::Engine(err @ Error::CredentialsNeeded { .. })) => needs_credentials(&err),
+        Err(Failure::Cancelled) => match progress.state_file.clone() {
+            Some(state_file) => stopped("cancelled", &state_file),
+            None => fail("cancelled"),
+        },
+        Err(Failure::Engine(err)) => fail(&err.to_string()),
+        Err(Failure::Message(message)) => fail(&message),
+    }
+}
+
+enum Failure {
+    Engine(Error),
+    Message(String),
+    Cancelled,
+}
+
+/// The folder to save into, created if needed.
+fn download_dir(chosen: Option<&Path>) -> Result<PathBuf, String> {
+    let dir = download_dir_path(chosen)?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|err| format!("cannot use the folder {}: {err}", dir.display()))?;
+    Ok(dir)
+}
+
+/// The folder given, or the system's downloads folder, without creating it.
+fn download_dir_path(chosen: Option<&Path>) -> Result<PathBuf, String> {
+    match chosen {
+        Some(dir) => std::path::absolute(dir)
+            .map_err(|err| format!("cannot use the folder {}: {err}", dir.display())),
+        None => Ok(SystemPaths::new()
+            .map_err(|err| err.to_string())?
+            .download_dir()
+            .to_path_buf()),
+    }
+}
+
+/// Ctrl+C asks `stop` to stop, so files in progress are saved to resume; a
+/// second Ctrl+C quits at once with [`EXIT_QUIT`] (review of #195: it did
+/// nothing). One listener for both, so no press is missed between them
+/// (review of #232).
+fn stop_on_ctrl_c(stop: tdm_core::Stop) {
+    tokio::spawn(async move {
+        #[cfg(unix)]
+        let Ok(mut presses) =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
+        else {
+            return;
+        };
+        #[cfg(windows)]
+        let Ok(mut presses) = tokio::signal::windows::ctrl_c() else {
+            return;
+        };
+        if presses.recv().await.is_some() {
+            stop.request();
+            eprintln!("tdm: stopping (Ctrl+C again to quit at once)");
+            if presses.recv().await.is_some() {
+                std::process::exit(EXIT_QUIT.into());
+            }
+        }
+    });
+}
+
+fn stopped(reason: &str, state_file: &Path) -> ExitCode {
+    eprintln!("tdm: the download stopped: {reason}");
+    print_resume_commands(state_file);
+    ExitCode::from(EXIT_RESUMABLE)
+}
+
+/// The `tdm resume` command for `state_file`, for each shell: the only
+/// way a subcommand prints one. The file name comes from the server: it is
+/// quoted for each shell so the printed command is safe to copy and run.
+pub(crate) fn print_resume_commands(state_file: &Path) {
+    let arg = state_file.to_string_lossy();
+    for ShellCommand { shell, command } in shell::commands("tdm resume", &arg) {
+        match command {
+            Some(command) => {
+                eprintln!("tdm: to resume, run this in {shell}:");
+                eprintln!("    {command}");
+            }
+            None => {
+                eprintln!("tdm: {shell} cannot be given this path safely; use another shell.")
+            }
+        }
+    }
+}
+
+/// A resume the server refused with 401: the state file never keeps a user
+/// name or password, so tell the user how to download the file again.
+///
+/// The user runs their own `tdm get` again (no command with the URL is
+/// printed: it would put the password in a command line and show a token
+/// from the URL), after deleting the two old files. Those paths come from
+/// the server, so the delete command and the folder are quoted for each
+/// shell, like the resume command in [`stopped`] (review of #29).
+fn needs_credentials(err: &Error) -> ExitCode {
+    let Error::CredentialsNeeded { state_file, .. } = err else {
+        return fail(&err.to_string());
+    };
+    eprintln!("tdm: error: {err}");
+    let part_file = tdm_core::state::part_path(
+        &tdm_core::state::final_path_for_state(state_file).unwrap_or_default(),
+    );
+    let (state_arg, part_arg) = (state_file.to_string_lossy(), part_file.to_string_lossy());
+    let dir = state_file.parent().unwrap_or(Path::new("."));
+    eprintln!("tdm: to download it again:");
+    eprintln!("tdm:   1. delete the two files this download left:");
+    for ShellCommand { shell, command } in shell::delete_commands(&[&state_arg, &part_arg]) {
+        match command {
+            Some(command) => {
+                eprintln!("tdm:      in {shell}:");
+                eprintln!("    {command}");
+            }
+            None => eprintln!(
+                "tdm:      {shell} cannot be given these paths safely; use another shell."
+            ),
+        }
+    }
+    eprintln!(
+        "tdm:   2. run the same `tdm get` command again, with your user name and password \
+         in the URL, and with this folder:"
+    );
+    for ShellCommand { shell, command } in shell::commands("--dir", &dir.to_string_lossy()) {
+        match command {
+            Some(command) => {
+                eprintln!("tdm:      in {shell}:");
+                eprintln!("    {command}");
+            }
+            None => eprintln!(
+                "tdm:      {shell} cannot be given this folder safely; use another shell."
+            ),
+        }
+    }
+    ExitCode::FAILURE
+}
+
+fn fail(message: &str) -> ExitCode {
+    eprintln!("tdm: error: {message}");
+    ExitCode::FAILURE
+}
+
+/// Shows engine events on stderr: a live line on a terminal, and only the
+/// important events otherwise.
+struct Progress {
+    live: bool,
+    /// The terminal understands ANSI escape codes.
+    ansi: bool,
+    /// Characters of the last progress line, to overwrite it without them.
+    width: usize,
+    last_draw: Option<Instant>,
+    started: Instant,
+    from: u64,
+    state_file: Option<PathBuf>,
+}
+
+impl Progress {
+    fn new() -> Self {
+        let live = std::io::stderr().is_terminal();
+        Progress {
+            live,
+            ansi: live && tdm_platform::console::enable_ansi_on_stderr(),
+            width: 0,
+            last_draw: None,
+            started: Instant::now(),
+            from: 0,
+            state_file: None,
+        }
+    }
+
+    fn show(&mut self, event: Event) {
+        match event {
+            Event::Started {
+                file,
+                state_file,
+                total,
+                from,
+                ..
+            } => {
+                self.clear_line();
+                self.started = Instant::now();
+                self.from = from;
+                self.state_file = Some(state_file);
+                let size = total
+                    .map(human_bytes)
+                    .unwrap_or_else(|| "unknown size".into());
+                if from > 0 {
+                    eprintln!(
+                        "Resuming {} at {} ({size})",
+                        file.display(),
+                        human_bytes(from)
+                    );
+                } else {
+                    eprintln!("Downloading {} ({size})", file.display());
+                }
+            }
+            Event::Progress { done, total } => self.draw(done, total),
+            Event::Restarted { reason } => {
+                self.clear_line();
+                eprintln!("Starting over: {}", describe(reason));
+            }
+            Event::ServerBusy {
+                status,
+                connections,
+                wait,
+            } => {
+                self.clear_line();
+                let wait = wait
+                    .map(|w| format!(", waiting {} s", w.as_secs_f64().ceil()))
+                    .unwrap_or_default();
+                eprintln!(
+                    "The server answered {status}: {connections} connection(s) from now on{wait}"
+                );
+            }
+            Event::Retrying { wait, reason } => {
+                self.clear_line();
+                eprintln!("Trying again in {} s: {reason}", wait.as_secs_f64().ceil());
+            }
+            Event::Split { .. } | Event::Finished { .. } => {}
+        }
+    }
+
+    fn draw(&mut self, done: u64, total: Option<u64>) {
+        if !self.live
+            || self
+                .last_draw
+                .is_some_and(|t| t.elapsed() < Duration::from_millis(100))
+        {
+            return;
+        }
+        self.last_draw = Some(Instant::now());
+        let secs = self.started.elapsed().as_secs_f64().max(0.001);
+        let speed = human_bytes(((done - self.from.min(done)) as f64 / secs) as u64);
+        let line = match total {
+            Some(total) if total > 0 => format!(
+                "{:5.1}%  {} / {}  {speed}/s",
+                done as f64 * 100.0 / total as f64,
+                human_bytes(done),
+                human_bytes(total)
+            ),
+            _ => format!("{}  {speed}/s", human_bytes(done)),
+        };
+        let mut err = std::io::stderr();
+        let _ = write!(err, "{}", redraw(&line, self.width, self.ansi));
+        let _ = err.flush();
+        self.width = line.chars().count();
+    }
+
+    fn clear_line(&mut self) {
+        if self.live && self.last_draw.take().is_some() {
+            let _ = write!(std::io::stderr(), "{}", redraw("", self.width, self.ansi));
+            let _ = write!(std::io::stderr(), "\r");
+            self.width = 0;
+        }
+    }
+}
+
+/// What to write to replace the previous progress line (`previous_width`
+/// characters) with `line`. Without ANSI support (the older Windows
+/// console), the old line is overwritten with spaces instead of an escape
+/// code, so no `←[2K` garbage appears.
+fn redraw(line: &str, previous_width: usize, ansi: bool) -> String {
+    if ansi {
+        format!("\r\x1b[2K{line}")
+    } else {
+        let padding = previous_width.saturating_sub(line.chars().count());
+        format!("\r{line}{}", " ".repeat(padding))
+    }
+}
+
+fn describe(reason: RestartReason) -> &'static str {
+    match reason {
+        RestartReason::FileChanged => "the file changed on the server",
+        RestartReason::RangesIgnored => "the server cannot continue partial downloads",
+        RestartReason::RangeMismatch => "the server sent a different part than requested",
+        RestartReason::NoValidator => {
+            "the server gives no reliable way to detect a changed file (no strong ETag or date)"
+        }
+        RestartReason::NothingDone => "nothing was downloaded yet",
+        RestartReason::PartFileMissing => "the .tdm-part file is missing",
+        RestartReason::PartFileTooShort => "the .tdm-part file is shorter than recorded",
+    }
+}
+
+fn human_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn formats_sizes() {
+        assert_eq!(human_bytes(0), "0 B");
+        assert_eq!(human_bytes(1023), "1023 B");
+        assert_eq!(human_bytes(1536), "1.5 KiB");
+        assert_eq!(human_bytes(50 * 1024 * 1024), "50.0 MiB");
+        assert_eq!(human_bytes(5 * 1024 * 1024 * 1024), "5.0 GiB");
+    }
+
+    #[test]
+    fn redraws_without_escape_codes_when_the_terminal_lacks_them() {
+        let plain = redraw("  5.0%", 12, false);
+        assert!(!plain.contains('\x1b'), "{plain:?}");
+        assert_eq!(plain, format!("\r  5.0%{}", " ".repeat(6)));
+        assert_eq!(redraw("abc", 0, false), "\rabc");
+        assert_eq!(redraw("abc", 2, true), "\r\x1b[2Kabc");
+    }
+
+    #[test]
+    fn arguments_parse() {
+        use clap::CommandFactory;
+        Cli::command().debug_assert();
+    }
+}

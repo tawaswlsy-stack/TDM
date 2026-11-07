@@ -1,0 +1,943 @@
+# نصوص واجهة TDM بالعربية (Fluent، https://projectfluent.org).
+# كل مفتاح هنا موجود في en/tdm.ftl بنفس المتغيرات، ويتأكد من ذلك
+# اختبار crates/tdm-i18n/tests/translations.rs.
+# صيغ الجمع العربية الست حسب CLDR: zero وone وtwo وfew وmany وother.
+# الاختيار دائمًا بـ PLURAL($count) لا بـ $count مباشرة: PLURAL يعيد اسم
+# الفئة من CLDR، في Rust (ICU4X) وفي الواجهة (Intl.PluralRules). مكتبة
+# الجمع التي يستعملها fluent-bundle في Rust تخطئ في 103 و111 بالعربية.
+
+app-name = TDM
+activity-log-title = سجل النشاط الحي
+activity-log-count = الأحداث المعروضة
+activity-log-level = المستوى
+activity-log-engine = المحرك
+activity-log-operation = العملية
+activity-log-all = الكل
+activity-log-newest = الأحدث أولًا
+activity-log-oldest = الأقدم أولًا
+activity-log-stop-scroll = إيقاف التمرير التلقائي
+activity-log-resume-scroll = استئناف التمرير التلقائي
+activity-log-copy = نسخ
+activity-log-clear = مسح السجل المعروض
+activity-log-cleared = مُسحت الأحداث المعروضة، ولم يتأثر سجل النظام.
+activity-log-copied = نُسخت الأحداث المصفّاة.
+activity-log-exported = صُدّر سجل النشاط.
+activity-log-empty = لا توجد أحداث مطابقة لهذه المرشحات.
+status-verifying = جارٍ التحقق
+status-verification-failed = فشل التحقق
+
+## الأعداد
+
+downloads-count =
+    { PLURAL($count) ->
+        [zero] لا تحميلات
+        [one] تحميل واحد
+        [two] تحميلان
+        [few] { $count } تحميلات
+        [many] { $count } تحميلًا
+       *[other] { $count } تحميل
+    }
+connections-count =
+    { PLURAL($count) ->
+        [zero] لا اتصالات
+        [one] اتصال واحد
+        [two] اتصالان
+        [few] { $count } اتصالات
+        [many] { $count } اتصالًا
+       *[other] { $count } اتصال
+    }
+queues-count =
+    { PLURAL($count) ->
+        [zero] لا طوابير
+        [one] طابور واحد
+        [two] طابوران
+        [few] { $count } طوابير
+        [many] { $count } طابورًا
+       *[other] { $count } طابور
+    }
+files-count =
+    { PLURAL($count) ->
+        [zero] لا ملفات
+        [one] ملف واحد
+        [two] ملفان
+        [few] { $count } ملفات
+        [many] { $count } ملفًا
+       *[other] { $count } ملف
+    }
+seconds-left =
+    { PLURAL($count) ->
+        [zero] { $count } ثانية
+        [one] ثانية واحدة
+        [two] ثانيتان
+        [few] { $count } ثوانٍ
+        [many] { $count } ثانيةً
+       *[other] { $count } ثانية
+    }
+minutes-left =
+    { PLURAL($count) ->
+        [zero] { $count } دقيقة
+        [one] دقيقة واحدة
+        [two] دقيقتان
+        [few] { $count } دقائق
+        [many] { $count } دقيقةً
+       *[other] { $count } دقيقة
+    }
+hours-left =
+    { PLURAL($count) ->
+        [zero] { $count } ساعة
+        [one] ساعة واحدة
+        [two] ساعتان
+        [few] { $count } ساعات
+        [many] { $count } ساعةً
+       *[other] { $count } ساعة
+    }
+
+## الوحدات ($value رقم منسَّق مسبقًا)
+
+size-bytes = { $value } بايت
+size-kib = { $value } كيلوبايت
+size-mib = { $value } ميجابايت
+size-gib = { $value } جيجابايت
+speed-per-second = { $size }/ث
+size-of-total = { $done } من { $total }
+
+## حالات التحميل
+
+status-waiting = في الانتظار
+status-active = يعمل
+status-paused = متوقف مؤقتًا
+status-done = اكتمل
+status-failed = فشل
+status-open-browser = افتح المتصفح ليكمل
+status-needs-ok = ينتظر موافقتك
+status-scheduled = مجدول { $time }
+
+## الشريط الجانبي
+
+nav-all = كل التحميلات
+nav-active = تعمل الآن
+nav-done = مكتملة
+nav-categories = الفئات
+nav-queues = الطوابير
+nav-settings = الإعدادات
+queue-window = من { $start } إلى { $stop }
+
+## الفئات المدمجة (المفتاح category-<id>)
+
+category-programs = برامج
+category-video = فيديوهات
+category-music = صوتيات
+category-documents = مستندات
+category-archives = مضغوطات
+category-none = بلا فئة
+
+## خانة اللصق والأدوات
+
+paste-placeholder = الصق رابطًا، أو اسحبه إلى هنا
+paste-download = حمّل
+action-resume = استكمال
+action-pause = إيقاف مؤقت
+action-delete = حذف
+action-details = التفاصيل
+action-open-folder = فتح المجلد
+action-cancel-download = إلغاء التحميل
+search-placeholder = بحث وتصفية
+
+## الجدول
+
+column-name = الاسم
+column-size = الحجم
+column-progress = التقدم
+column-speed = السرعة
+column-left = المتبقي
+column-status = الحالة
+progress-label =
+    { PLURAL($count) ->
+        [zero] { $percent }
+        [one] { $percent } في جزء واحد
+        [two] { $percent } في جزأين
+        [few] { $percent } في { $count } أجزاء
+        [many] { $percent } في { $count } جزءًا
+       *[other] { $percent } في { $count } جزء
+    }
+
+## الشريط السفلي
+
+footer-active =
+    { PLURAL($count) ->
+        [zero] لا شيء يعمل الآن
+        [one] يعمل الآن: تحميل واحد
+        [two] يعمل الآن: تحميلان
+        [few] يعمل الآن: { $count } تحميلات
+        [many] يعمل الآن: { $count } تحميلًا
+       *[other] يعمل الآن: { $count } تحميل
+    }
+footer-total-speed = السرعة الكلية { $speed }
+footer-limit-none = حد السرعة: بلا حد
+footer-limit = حد السرعة: { $speed }
+footer-waiting =
+    { PLURAL($count) ->
+        [zero] لا شيء في الانتظار
+        [one] في الانتظار: تحميل واحد
+        [two] في الانتظار: تحميلان
+        [few] في الانتظار: { $count } تحميلات
+        [many] في الانتظار: { $count } تحميلًا
+       *[other] في الانتظار: { $count } تحميل
+    }
+
+## حوار الإضافة
+
+add-title = إضافة تحميل
+add-url = الرابط
+add-probe-ranges = { $size }. السيرفر يدعم التقسيم، فيمكن التحميل بعدة اتصالات واستكماله لاحقًا.
+add-probe-single = { $size }. السيرفر لا يدعم التقسيم، فسيُحمَّل باتصال واحد.
+add-probe-unsure = { $size }. السيرفر يدعم التقسيم، لكنه لا يعطي الحجم أو ما يُتأكَّد به أن الملف لم يتغيّر، فسيُحمَّل باتصال واحد، ويبدأ من جديد إذا انقطع.
+add-file-name = اسم الملف
+add-category = الفئة
+add-category-extension = { $category } (من الامتداد { $extension })
+add-category-site = { $category } (من الموقع { $site })
+add-queue = الطابور
+add-folder = المجلد
+add-change = تغيير
+add-connections = الاتصالات
+add-connections-hint = من { $min } إلى { $max }
+add-limit = حد السرعة لهذا التحميل
+add-limit-none = بلا حد
+add-cancel = إلغاء
+add-later = نزّل لاحقًا
+add-start = ابدأ التحميل
+
+## التفاصيل
+
+details-title = تفاصيل التحميل
+details-from-to = من { $site }، إلى { $folder }
+details-file-map = خريطة الملف: كل مربع { $size }
+details-map-done = وصل
+details-map-writing = يُكتب الآن
+details-map-split = موضع تقسيم
+details-part = الجزء { $number }
+details-part-done = انتهى
+details-speed = السرعة
+details-left = المتبقي
+details-parts = الأجزاء
+details-connections-value = يعمل { $active } من { $total }
+details-resumable = يمكن استكماله
+details-yes = نعم
+details-no = لا
+details-unknown = غير معروف
+details-back = رجوع إلى القائمة
+details-limit = حد السرعة
+details-queue = الطابور
+details-speed-chart = السرعة في آخر دقيقة
+details-chart-then = قبل دقيقة
+details-chart-now = الآن
+details-failed = توقف التحميل: { $error }
+details-open-browser = جاء هذا التحميل من المتصفح بكوكيزه، و TDM لا يحفظ الكوكيز. افتح المتصفح (ونفس الملف الشخصي) الذي جاء منه، فيأخذها TDM منه ويكمل وحده. وإن لم يعد ذلك المتصفح موجودًا، استكمل بلا كوكيز.
+details-without-cookies = استكمل بلا كوكيز
+details-needs-ok = هذا الملف قد يشغّل برامج على جهازك (برنامج أو مثبّت أو سكربت أو ملف Office بماكرو)، وجاء من صفحة في المتصفح، فلن يبدأ تحميله حتى تبدأه أنت. ابدأه فقط إن كنت تثق بالموقع.
+
+## تحديث رابط التحميل
+
+refresh-action = تحديث الرابط
+refresh-title = تحديث رابط التحميل
+refresh-hint = إذا انتهت صلاحية الرابط، فخذ من الموقع رابطًا جديدًا للملف نفسه والصقه هنا. يتأكد TDM أنه الملف نفسه، ثم يكمل من حيث توقف.
+refresh-url = الرابط الجديد
+refresh-cancel = إلغاء
+refresh-go = حدّث واستكمل
+refresh-not-stopped = أوقف التحميل مؤقتًا أولًا، ثم حدّث رابطه.
+refresh-stopping = التحميل ما زال يتوقف. انتظر لحظة، ثم حاول مرة أخرى.
+refresh-busy = تحديث رابط هذا التحميل جارٍ بالفعل.
+refresh-cancelled = أُلغي تحديث الرابط، ولم يتغيّر التحميل.
+refresh-done = اكتمل هذا التحميل، فلا يحتاج رابطًا جديدًا.
+refresh-bad-link = TDM لا يقبل هذا الرابط: يجب أن يبدأ بـ http أو https، وألا يحمل اسم مستخدم أو كلمة مرور.
+refresh-size = الرابط الجديد لملف آخر: حجمه { $theirs }، وحجم هذا التحميل { $ours }.
+refresh-size-unknown = لا يُعرف حجم الملف الجديد أو حجم هذا التحميل، فلا يستطيع TDM التأكد أنه الملف نفسه.
+refresh-version = الرابط الجديد لنسخة أخرى من الملف، فلن يكمل TDM منه حتى لا يفسد الملف.
+refresh-validator-kind = السيرفر يصف الملف الجديد بطريقة مختلفة، فلا يستطيع TDM التأكد أنه الملف نفسه.
+refresh-new-no-validator = سيرفر الرابط الجديد لا يعطي ما يتأكد به TDM أنه الملف نفسه.
+refresh-no-validator = سيرفر هذا التحميل لم يعطِ ما يتأكد به TDM من الملف، فلا يمكن تحديث رابطه. ابدأ تحميلًا جديدًا بالرابط الجديد.
+refresh-failed = لم يُحدَّث الرابط.
+
+## الإعدادات
+
+settings-title = الإعدادات
+settings-applied = كل تغيير يُطبَّق فورًا.
+settings-language = اللغة
+settings-language-hint = تتغير الواجهة فورًا، دون إعادة تشغيل.
+settings-theme = المظهر
+settings-theme-hint = النظام يتبع إعداد الجهاز.
+settings-theme-system = النظام
+settings-theme-light = فاتح
+settings-theme-dark = داكن
+settings-palette = قالب الألوان
+settings-palette-hint = اختر هوية ألوان للواجهة. يبقى اختيار الوضع الفاتح أو الداكن مستقلاً.
+settings-palette-tdm = هوية TDM
+settings-palette-ocean = أزرق بحري
+settings-palette-forest = أخضر
+settings-palette-sunset = غروب
+settings-digits = الأرقام
+settings-digits-hint = في الأحجام والسرعات والأوقات.
+settings-folder = مجلد التحميل
+settings-folder-hint = وكل فئة يمكن أن يكون لها مجلدها.
+settings-connections = الاتصالات لكل تحميل
+settings-connections-hint = الافتراضي { $default }، والحد الأقصى { $max }.
+settings-limit = حد السرعة للبرنامج كله
+settings-limit-hint = يشمل كل التحميلات معًا.
+settings-limit-none = بلا حد
+settings-limit-set = حدد سرعة
+settings-autostart = عند بدء النظام
+settings-autostart-label = شغّل TDM مع بدء النظام
+settings-autostart-failed = تعذّر تغيير التشغيل مع بدء النظام.
+settings-notifications = الإشعارات
+settings-notifications-label = أخبرني عندما يكتمل تحميل أو يفشل
+settings-browser = المتصفح
+settings-browser-hint = يسجّل TDM نفسه في Chrome وEdge وBrave وOpera وVivaldi وChromium وFirefox عند كل تشغيل، مثبَّتة كانت أو لا، لتصل إليه إضافته. وهذا الزر يعيد التسجيل ويقول النتيجة.
+settings-browser-fix = أصلح التكامل مع المتصفح
+settings-browser-ok = { $browser }: مسجَّل
+settings-browser-failed = { $browser }: لم يُسجَّل ({ $error })
+settings-browser-missing = لم يُعثر على tdm-host بجانب البرنامج، فلا يصل إليه أي متصفح.
+settings-browser-temporary = يعمل البرنامج من مكان يزول حين يُغلق (نقله ماك جانبًا)، فلم يُسجَّل في أي متصفح. انقل TDM إلى مجلد «التطبيقات».
+settings-browser-unsafe = يستطيع مستخدم آخر أن يغيّر tdm-host أو مجلده، فلم يُسجَّل في أي متصفح.
+settings-browser-working = يسجّل…
+settings-clipboard = الحافظة
+settings-clipboard-label = راقب الحافظة، وضع رابط التحميل الذي أنسخه في خانة الإضافة
+settings-clipboard-hint = ينظر TDM في الحافظة مرتين في الثانية بحثًا عن رابط ملف، ولا يحفظ ما فيها. ولا يتصل بالرابط ولا يضيف شيئًا قبل أن تضغط «تمام» في نافذة «إضافة رابط».
+settings-export = صدّر الطوابير
+settings-import = استورد طوابير
+settings-export-warning = الملف فيه الروابط كما هي، وبعضها قد يحمل مفاتيح دخول مؤقتة. لا تنشره.
+
+## الفئات
+
+categories-title = الفئات
+categories-hint = الفئة تُختار من موقع التحميل أولًا، ثم من امتداد الملف.
+categories-new = فئة جديدة
+categories-name = الاسم
+categories-extensions = الامتدادات
+categories-extensions-hint = اكتب امتدادًا واضغط Enter.
+categories-add-extension = امتداد
+categories-sites = المواقع
+categories-sites-hint = كل ما يأتي من هذه المواقع يذهب إلى هنا.
+categories-folder = المجلد
+categories-folder-none = المجلد الذي يُعطى للتحميل
+categories-try = جرّب
+categories-try-hint = اكتب اسم ملف لترى فئته.
+categories-delete = احذف الفئة
+
+## شريط النظام
+
+tray-open = افتح TDM
+tray-pause-all = أوقف الكل
+tray-resume-all = استكمل الكل
+tray-quit = إنهاء TDM
+
+## الإشعارات
+
+notify-done-title = اكتمل التحميل
+notify-done-body = { $name }
+notify-failed-title = فشل التحميل
+notify-failed-body = { $name }: { $reason }
+
+## الإعدادات والفئات (مفاتيح كانت ناقصة: مراجعة #57)
+settings-queues = الطوابير
+settings-folder-choose = اختر مجلدًا
+settings-folder-default = مجلد التحميلات في النظام
+settings-import-keep-folders = استخدم المجلدات التي في الملف المستورد
+settings-limit-value = الحد
+settings-limit-unit = الوحدة
+unit-kib-per-second = كيلوبايت/ث
+unit-mib-per-second = ميجابايت/ث
+export-done = صُدّرت الطوابير.
+import-done =
+    { PLURAL($count) ->
+        [zero] لم يُضف أي تحميل.
+        [one] أُضيف تحميل واحد.
+        [two] أُضيف تحميلان.
+        [few] أُضيفت { $count } تحميلات.
+        [many] أُضيف { $count } تحميلًا.
+       *[other] أُضيف { $count } تحميل.
+    }
+import-kept = هذه الطوابير أبقت إعداداتها: { $names }.
+categories-add-site = أضف موقعًا
+categories-folder-clear = بلا مجلد
+categories-remove = احذف { $value }
+
+## النافذة الرئيسية (M5.5، تصميم #83)
+
+settings-edit-categories = حرّر الفئات
+tb-add = إضافة رابط
+tb-paste = لصق رابط من الحافظة
+paste-no-link = لا يوجد رابط ويب في الحافظة.
+tb-resume = استكمال
+tb-pause = إيقاف
+tb-pause-all = إيقاف الكل
+tb-resume-all = استكمال الكل
+tb-delete = حذف
+tb-delete-done = حذف المكتمل
+tb-settings = الإعدادات
+tb-schedule = الجدولة
+tb-run-queue = تشغيل الطابور
+tb-halt-queue = إيقاف الطابور
+tb-toolbar = أدوات التحميل
+tree-unfinished = غير مكتملة
+tree-finished = مكتملة
+tree-waiting = في الانتظار
+tree-label = التحميلات والفئات والطوابير
+confirm-remove = احذف من القائمة
+confirm-cancel = إلغاء
+confirm-delete-done =
+    { PLURAL($count) ->
+        [zero] لا تحميلات مكتملة معروضة.
+        [one] يُحذف من القائمة تحميل مكتمل واحد. الملف نفسه يبقى في مكانه.
+        [two] يُحذف من القائمة تحميلان مكتملان. الملفان نفساهما يبقيان في مكانهما.
+        [few] يُحذف من القائمة { $count } تحميلات مكتملة. الملفات نفسها تبقى في مكانها.
+        [many] يُحذف من القائمة { $count } تحميلًا مكتملًا. الملفات نفسها تبقى في مكانها.
+       *[other] يُحذف من القائمة { $count } تحميل مكتمل. الملفات نفسها تبقى في مكانها.
+    }
+confirm-delete =
+    { PLURAL($count) ->
+        [zero] لا شيء محدد.
+        [one] يُحذف من القائمة تحميل واحد. ما نُزّل منه يبقى على القرص.
+        [two] يُحذف من القائمة تحميلان. ما نُزّل منهما يبقى على القرص.
+        [few] يُحذف من القائمة { $count } تحميلات. ما نُزّل منها يبقى على القرص.
+        [many] يُحذف من القائمة { $count } تحميلًا. ما نُزّل منها يبقى على القرص.
+       *[other] يُحذف من القائمة { $count } تحميل. ما نُزّل منها يبقى على القرص.
+    }
+tree-expand = أظهر ما تحتها
+queue-main = الطابور الرئيسي
+queue-starts = يبدأ { $time }
+col-name = اسم الملف
+col-size = الحجم
+col-status = الحالة
+col-left = الوقت المتبقي
+col-speed = السرعة
+col-last-try = آخر محاولة
+col-description = الوصف
+st-in-queue = في الطابور
+st-paused = متوقف
+st-error = خطأ { $code }
+st-failed = فشل
+footer-selected = التحديد: { $number }
+addlink-title = إضافة رابط
+addlink-url = الرابط
+addlink-from-clipboard = أُخذ الرابط من الحافظة
+addlink-ok = تمام
+addlink-cancel = إلغاء
+
+## M5.5: the menus, the right-click menu and the columns
+
+menu-bar = القوائم
+menu-file = ملف
+menu-edit = تحرير
+menu-downloads = التحميلات
+menu-view = عرض
+menu-help = مساعدة
+cmd-add = إضافة رابط…
+cmd-import = استيراد الطوابير…
+cmd-export = تصدير الطوابير…
+cmd-quit = خروج
+cmd-select-all = تحديد الكل
+cmd-find = بحث
+cmd-copy-link = نسخ الرابط
+cmd-delete-done = حذف المكتمل
+cmd-resume = استكمال
+cmd-pause = إيقاف
+cmd-pause-all = إيقاف الكل
+cmd-resume-all = استكمال الكل
+cmd-delete = حذف…
+cmd-run-queue = تشغيل الطابور
+cmd-halt-queue = إيقاف الطابور
+cmd-schedule = الجدولة…
+cmd-settings = الإعدادات…
+cmd-categories = الفئات…
+cmd-columns = الأعمدة
+cmd-open = فتح
+cmd-open-folder = فتح المجلد
+cmd-progress = نافذة التقدّم
+cmd-refresh-link = تحديث الرابط…
+cmd-properties = الخصائص
+cmd-about = عن TDM
+cmd-move-to-queue = أضف إلى طابور
+about-text = TDM، الإصدار { $version }
+about-developer = معلومات المطوّر
+about-developer-name = حامد هزاع | Hamed Hazzaa
+about-developer-service = تواصل لخدمات الإنترنت | Tawaswl Internet Service
+about-developer-phone = الهاتف: +963987512721
+about-developer-email = البريد: tawaswl@outlook.com - 7amedhazza3@gmail.com
+about-copy-problem = انسخ معلومات المشكلة
+about-copied-problem = نُسخت معلومات المشكلة: نسخة TDM والنظام وأدوات الفيديو وآخر أسطر السجل، بلا روابط. الصقها مع وصف المشكلة حيث تطلب المساعدة: صفحة المشروع على GitHub، أو تعليق، أو رسالة.
+about-copy-failed = تعذّر النسخ إلى الحافظة.
+table-label = التحميلات
+col-resize = عرض عمود { $column }
+sys-hide = إخفاء { $app }
+sys-hide-others = إخفاء الآخرين
+sys-show-all = إظهار الكل
+sys-undo = تراجع
+sys-redo = إعادة
+sys-cut = قص
+sys-copy = نسخ
+sys-paste = لصق
+sys-window = نافذة
+sys-minimize = تصغير
+sys-zoom = تكبير
+row-menu = قائمة التحميل
+open-code-question = «{ $name }» برنامج أو ملف يمكنه تشغيل أوامر على جهازك. هل تفتحه؟
+open-code-ok = فتح
+open-no-file = الملف ليس في مكانه: ربما نُقل أو حُذف.
+open-no-folder = مجلد التحميل لم يعد موجودًا.
+
+## M5.5: the add windows
+info-title = معلومات ملف التحميل
+add-new-category = فئة جديدة
+add-remember = تذكّر هذا المجلد لفئة «{ $category }»
+add-resumable = يمكن استكماله
+add-not-resumable = لا يمكن استكماله
+add-later-queue = نزّل لاحقًا في طابور
+add-checking = جارٍ سؤال السيرفر عن الملف…
+add-about-file = عن الملف
+addlink-info-open = نافذة «معلومات ملف التحميل» مفتوحة لرابط آخر. كمّله أو ألغِه أولًا.
+add-remember-failed = أُضيف التحميل، لكن لم يُحفظ المجلد للفئة: { $error }
+
+## Quit with downloads running (owner's decision on #83)
+quit-question =
+    { PLURAL($count) ->
+        [zero] لا تحميلات تعمل الآن. هل تُنهي TDM؟
+        [one] يعمل الآن تحميل واحد. هل تُنهي TDM؟
+        [two] يعمل الآن تحميلان. هل تُنهي TDM؟
+        [few] يعمل الآن { $count } تحميلات. هل تُنهي TDM؟
+        [many] يعمل الآن { $count } تحميلًا. هل تُنهي TDM؟
+       *[other] يعمل الآن { $count } تحميل. هل تُنهي TDM؟
+    }
+quit-ok = إنهاء TDM
+
+## الجدولة
+
+schedule-title = الجدولة
+schedule-queues = الطوابير
+schedule-new = طابور جديد
+schedule-new-name = اسم الطابور الجديد
+schedule-new-hint = حروف وأرقام ومسافة واحدة بين الكلمات، و - و _.
+tree-queue-exists = فيه طابور بالاسم ده.
+queue-new-option = طابور جديد…
+queue-none-video = بلا طابور (يبدأ الآن)
+schedule-create = إنشاء
+schedule-cancel = إلغاء
+schedule-delete = حذف
+schedule-delete-confirm = يُحذف هذا الطابور، وتنتقل تحميلاته إلى آخر الطابور الرئيسي. هل تحذفه؟
+schedule-main-stays = الطابور الرئيسي لا يُحذف.
+schedule-summary-none = بلا موعد
+schedule-start = البدء
+schedule-start-any = بلا موعد: يعمل متى كان فيه ما ينتظر
+schedule-start-at = ابدأ في
+schedule-days = الأيام
+schedule-days-hint = بلا أيام محددة: كل يوم.
+schedule-day-sat = السبت
+schedule-day-sun = الأحد
+schedule-day-mon = الإثنين
+schedule-day-tue = الثلاثاء
+schedule-day-wed = الأربعاء
+schedule-day-thu = الخميس
+schedule-day-fri = الجمعة
+schedule-stop = الإيقاف
+schedule-stop-at = أوقف في
+schedule-stop-hint = ما لم يكتمل يتوقف، ويُستكمل في الموعد التالي.
+schedule-max-active = عدد التحميلات في الوقت نفسه
+schedule-after = بعد انتهاء الطابور
+schedule-after-nothing = لا شيء
+schedule-after-shutdown = أغلق الجهاز
+schedule-after-sleep = السكون
+schedule-after-hint = لهذا التشغيل فقط، ولا يُحفظ. وقبله يعدّ TDM دقيقة يمكنك الإلغاء فيها.
+schedule-countdown-shutdown = انتهى الطابور، ويُغلق الجهاز بعد:
+schedule-countdown-sleep = انتهى الطابور، ويدخل الجهاز في السكون بعد:
+schedule-countdown-cancel = إلغاء
+schedule-after-failed = لم يتم ذلك:
+schedule-files = التحميلات في الطابور (بترتيب البدء)
+schedule-up = لأعلى
+schedule-down = لأسفل
+schedule-move = انقل إلى طابور…
+schedule-empty = لا تحميلات في هذا الطابور.
+schedule-start-now = ابدأ الآن
+schedule-started = بدأ الطابور.
+schedule-save = حفظ
+schedule-saved = حُفظ.
+schedule-close = إغلاق
+schedule-tries = المحاولات لكل ملف
+schedule-after-open = وافتح بعده ملفًا أو برنامجًا:
+schedule-after-open-pick = اختر ملفًا…
+schedule-after-open-clear = إزالة
+schedule-after-open-confirm = سيفتح TDM هذا الملف أو البرنامج كلما انتهت كل تحميلات هذا الطابور. احفظه فقط إن كنت تثق به.
+schedule-after-open-ok = احفظه
+
+## الاكتمال
+
+complete-title = اكتمل التحميل
+complete-name = الاسم
+complete-size = الحجم
+complete-folder = حُفظ في
+complete-url = الرابط
+complete-open = افتح
+complete-open-folder = افتح المجلد
+complete-close = إغلاق
+complete-dont-show = لا تُظهر هذه النافذة مرة أخرى
+complete-setting = أظهر نافذة «اكتمل التحميل» حين ينتهي تحميل
+complete-drag = اسحبه من هنا
+complete-drag-hint = اسحب الملف من هنا إلى أي برنامج أو مجلد
+
+## التحديث
+
+update-available = توجد نسخة جديدة من TDM:
+update-release-page = صفحة الإصدار
+update-dismiss = إخفاء حتى التشغيل التالي
+update-install = حدّث الآن
+extension-old = إضافة المتصفح قديمة، وتحتاج تحديثًا لتعمل معها كل خصائص TDM. نسختها:
+extension-old-help = طريقة التحديث
+update-install-hint = تحفظ التحميلات تقدّمها وتتوقف، ثم يتحدّث TDM ويُفتح من جديد، فتُستكمل.
+update-skip = تخطَّ هذه النسخة
+update-downloading = يُنزَّل التحديث…
+update-failed = تعذّر تثبيت التحديث. نزّله من صفحة الإصدار.
+update-setting-title = التحديثات
+update-setting = ابحث عن نسخة جديدة عند التشغيل
+update-setting-hint = يسأل GitHub فقط. ولا يُنزَّل التحديث إلا إذا ضغطت «حدّث الآن».
+
+## حد كل موقع
+
+status-waiting-site = ينتظر الموقع
+sites-title = عدد الاتصالات لكل موقع
+sites-hint = بلا حد افتراضيًا. والموقع في القائمة يشمل مواقعه الفرعية، وعدده مشترك بين كل تحميلاته.
+sites-empty = لا مواقع في القائمة: لا حد لأي موقع.
+sites-site = الموقع
+sites-connections = الاتصالات
+sites-add = أضف موقعًا
+sites-remove = احذف الموقع
+sites-save = احفظ القائمة
+sites-bad-site = ليس اسم موقع:
+sites-twice = موقع مكرر:
+sites-bad-number = عدد الاتصالات خارج حدوده لهذا الموقع:
+sites-too-many = القائمة أطول مما يُسمح به.
+
+## الفيديو (M6)
+
+video-soon = تحميل الفيديو قادم قريبًا.
+
+## The main window's title bar (the design of #83)
+app-title = TDM
+win-minimize = تصغير
+win-maximize = تكبير
+win-restore = استعادة
+win-close = إغلاق
+
+## Closing the window (owner's decision, after #105)
+tray-still-running = TDM ما زال يعمل في شريط النظام، والتحميلات تكمل. اختر «إنهاء TDM» من أيقونته لإنهائه.
+settings-closing = إغلاق النافذة
+settings-closing-label = إغلاق النافذة يُنهي TDM
+settings-closing-hint = دون هذا الخيار تختفي النافذة ويبقى TDM في شريط النظام والتحميلات تكمل.
+settings-closing-no-tray = لا يظهر شريط النظام في سطح المكتب هذا، فإغلاق النافذة يُنهي TDM دائمًا (ويسأل أولًا إن كانت هناك تحميلات تعمل).
+
+## M5.5: the progress window (design window 4)
+progress-title = تقدّم التحميل
+progress-tab-status = حالة التحميل
+progress-tab-limit = حد السرعة
+progress-tab-finish = عند الانتهاء
+progress-status = الحالة
+progress-size = حجم الملف
+progress-done = ما نُزّل
+progress-resume = الاستكمال
+progress-resume-yes = ممكن
+progress-resume-no = غير ممكن
+progress-receiving = يستقبل البيانات…
+progress-more = إظهار التفاصيل
+progress-less = إخفاء التفاصيل
+progress-close = إغلاق
+progress-connection = الاتصال
+progress-got = ما نزّله
+progress-working = يعمل { $number }
+progress-left-part = باقٍ
+progress-no-parts = تظهر الأجزاء حين يبدأ التحميل.
+progress-limit-on = حدّد سرعة هذا التحميل
+progress-limit-unit = كيلوبايت/ث
+progress-limit-hint = حد البرنامج كله في الإعدادات يبقى ساريًا كذلك.
+progress-limit-saved = حُفظ الحد.
+progress-limit-now = حُفظ الحد، ويأخذه التحميل الآن.
+progress-finish-hint = ما تفعله هذه النافذة حين ينتهي التحميل وهي مفتوحة:
+progress-finish-open = افتح الملف
+progress-finish-folder = افتح المجلد
+progress-finish-close = أغلق هذه النافذة
+progress-gone = أُزيل هذا التحميل من القائمة.
+progress-parts-done = اكتمل التحميل، وكل أجزائه وصلت.
+progress-limit-bad = اكتب رقمًا صحيحًا من { $min } إلى { $max }.
+progress-connections = { $connections }، { $working }
+
+## «Download file info»: the owner's test with a Google Drive link
+add-size-unknown = الحجم غير معروف
+add-web-page = هذا الرابط صفحة ويب، لا ملف. إن كان فيها فيديو، فاضغط «حمّل الفيديو من الصفحة». وإلا فافتح الصفحة في المتصفح واضغط زر التحميل فيها.
+add-video-from-page = حمّل الفيديو من الصفحة
+add-probe-unsure-no-size = { $size }. السيرفر يدعم التقسيم، لكنه لا يعطي ما يُتأكَّد به أن الملف لم يتغيّر، فسيُحمَّل باتصال واحد، ويبدأ من جديد إذا انقطع.
+
+## «Download file info»: the user's name, category and description (#103, #95)
+add-description = الوصف
+add-description-hint = اختياري
+add-save-as = احفظ باسم
+add-choose-folder = اختر مجلدًا
+last-try-yesterday = أمس { $time }
+
+## The toolbar as the user leaves it (M5.5)
+tb-big = أزرار كبيرة
+tb-small = أزرار صغيرة
+tb-customize = تخصيص شريط الأدوات…
+tb-customize-title = تخصيص شريط الأدوات
+tb-earlier = قدّم «{ $name }»
+tb-later = أخّر «{ $name }»
+tb-reset = كما كان
+tb-done = تم
+
+## The drop box (M5.5)
+drop-box = سلة الإسقاط
+drop-hint = اسحب رابطًا هنا لتحميله. وبكليك يمين: تحميل بالجملة، أو إخفاؤها.
+tray-drop-box = إظهار سلة الإسقاط
+settings-drop-box-label = إظهار سلة الإسقاط فوق كل النوافذ
+settings-drop-box-hint = مربع صغير بشعار TDM، تسحب عليه رابطًا من المتصفح فيفتح «معلومات ملف التحميل». تحرّكه بسحبه، وبكليك يمين عليه: تحميل بالجملة، أو إخفاؤه.
+
+## The table's queue column, «Remove from queue», and deleting what has not finished (M5.5)
+col-queue = الطابور
+cmd-remove-from-queue = إزالة من الطابور
+delete-unfinished =
+    { PLURAL($count) ->
+        [zero] لا تحميلات لم تكتمل.
+        [one] هذا التحميل لم يكتمل بعد. هل تحذفه؟
+        [two] هذان التحميلان لم يكتملا بعد. هل تحذفهما؟
+        [few] هذه { $count } تحميلات لم تكتمل بعد. هل تحذفها؟
+        [many] هذه { $count } تحميلًا لم تكتمل بعد. هل تحذفها؟
+       *[other] هذه { $count } تحميل لم تكتمل بعد. هل تحذفها؟
+    }
+delete-also-finished =
+    { PLURAL($count) ->
+        [zero] لا تحميلات مكتملة معها.
+        [one] ومعها تحميل مكتمل واحد، يبقى ملفه في مكانه.
+        [two] ومعها تحميلان مكتملان، يبقى ملفاهما في مكانهما.
+        [few] ومعها { $count } تحميلات مكتملة، تبقى ملفاتها في مكانها.
+        [many] ومعها { $count } تحميلًا مكتملًا، تبقى ملفاتها في مكانها.
+       *[other] ومعها { $count } تحميل مكتمل، تبقى ملفاتها في مكانها.
+    }
+delete-unfinished-files = واحذف الملفات الناقصة أيضًا
+
+## Video downloads (M6, #149)
+cmd-video = تحميل فيديو…
+video-title = جودة الفيديو
+video-page = رابط صفحة الفيديو
+video-consent-title = أدوات الفيديو
+video-consent-why = لتحميل الفيديو يحتاج TDM إلى أدوات مجانية مفتوحة المصدر (QuickJS-NG منها لفيديوهات يوتيوب). لن يُنزَّل شيء قبل أن توافق.
+video-tool = الأداة
+video-version = النسخة
+video-source = المصدر
+video-license = الترخيص
+video-consent-note = تُحفظ في مجلد بيانات TDM، ويُتحقق من بصمة كل ملف قبل تشغيله. يمكنك حذفها من الإعدادات.
+video-consent-ok = موافق، نزّل الأدوات
+video-installing = تنزيل أدوات الفيديو…
+video-probing = جارٍ سؤال الصفحة عن الفيديو…
+video-waits = فيديو ينتظر أن تختار جودته في «جودة الفيديو».
+video-waits-show = اعرضه
+video-quality = الجودة
+video-audio-only = صوت فقط ({ $format })
+video-sound = الصوت
+video-sound-original = الأصلي
+video-sound-dubbed = مدبلج
+video-playlist =
+    { PLURAL($count) ->
+        [zero] قائمة تشغيل فارغة.
+        [one] قائمة تشغيل فيها فيديو واحد.
+        [two] قائمة تشغيل فيها فيديوهان.
+        [few] قائمة تشغيل فيها { $count } فيديوهات.
+        [many] قائمة تشغيل فيها { $count } فيديو.
+       *[other] قائمة تشغيل فيها { $count } فيديو.
+    }
+video-download-chosen = نزّل المحدد
+video-open-playlist = افتح
+video-playlists-only = هذه قوائم تشغيل: افتح كل واحدة منها لتختار فيديوهاتها.
+video-error-playlist = هذا الرابط قائمة تشغيل لا فيديو. افتحه في «جودة الفيديو» لتختار منه.
+video-done = اكتمل تحميل الفيديو.
+video-drm = هذا الفيديو محمي، و TDM لا يحمّل المحتوى المحمي.
+video-tools-missing = أدوات الفيديو غير منزّلة أو تغيّرت. نزّلها من الإعدادات ← أدوات الفيديو، أو حمّل الفيديو من جديد.
+video-not-quicktime = لا تعمل في QuickTime
+video-tools-not-ready = نُزِّل yt-dlp لكنه لم يبدأ، فأدوات الفيديو ليست جاهزة. حاول مرة أخرى، وإن تكرر ذلك فأخبرنا بما في «التفاصيل».
+video-error-no_formats = لم يجد TDM جودة يمكن تحميلها من هذا الفيديو. جرّب مرة أخرى بعد قليل.
+video-error-sign_in = هذا الفيديو لا يُفتح إلا بعد تسجيل الدخول في موقعه. سجّل دخولك في المتصفح واسمح للإضافة بإرسال الكوكيز، ثم أعد المحاولة.
+video-error-private = هذا الفيديو خاص، فلا يراه إلا من أذن له صاحبه.
+video-error-unsupported = لا يعرف TDM طريقة لتحميل الفيديو من هذا الموقع.
+video-error-challenge = لم يستطع TDM أن يجتاز تحقّق يوتيوب لهذا الفيديو. جرّب مرة أخرى بعد قليل.
+video-error-other = تعذّر تحميل هذا الفيديو.
+video-error-other-details = تعذّر تحميل هذا الفيديو. التفاصيل: { $details }
+video-error-details = التفاصيل
+video-started-reading = يقرأ TDM الفيديو…
+video-size = الحجم
+
+## Video downloads in the list (M6, #149)
+queue-video = فيديو
+
+## Video tools in the settings and «About» (M6, #149)
+settings-video-tools = أدوات الفيديو
+settings-video-tools-hint = تُنزَّل بموافقتك أول مرة تحمّل فيها فيديو، أو من هنا، وتُحفظ في مجلد بيانات TDM.
+settings-video-tools-ready = جاهزة
+settings-video-tools-missing = غير منزّلة
+settings-video-tools-remove = حذف أدوات الفيديو
+settings-video-tools-remove-question = تُحذف أدوات الفيديو، وتُنزَّل من جديد بموافقتك حين تحمّل فيديو. هل تحذفها؟
+settings-video-tools-removed = حُذفت أدوات الفيديو.
+settings-videos-at-once = عدد الفيديوهات في الوقت نفسه
+settings-videos-at-once-hint = الافتراضي { $default }، والحد الأقصى { $max }. كل فيديو من يوتيوب يفتح عدة اتصالات، وكثرتها قد تجعل يوتيوب يبطئها.
+settings-finish = عند انتهاء التحميل
+settings-finish-hint = ما تفعله نافذة التحميل حين ينتهي، لكل التحميلات. ويمكنك تغييره لتحميل واحد من تبويب «عند الانتهاء» في نافذته. والبرامج (مثل exe) تسأل قبل أن تُفتح.
+settings-video-tools-install = نزّل أدوات الفيديو
+settings-video-tools-installing = تنزيل { $tool }… { $percent }
+settings-video-tools-installed = أدوات الفيديو جاهزة.
+about-video-tools = يحمّل TDM الفيديو بأدوات حرة، تُنزَّل من مصادرها:
+about-ffmpeg = يستعمل هذا البرنامج مكتبات من مشروع FFmpeg بترخيص { $license }.
+about-tool = { $tool } { $version }، بترخيص { $license }. مصدره: { $source }
+about-tool-or-later = { $tool } { $version }، بترخيص { $license } أو أحدث. مصدره: { $source }
+about-tool-yt-dlp = { $tool } { $version }، بترخيص { $binary } للملف الذي ينزّله TDM (والكود المصدري بترخيص { $license }). مصدره: { $source }
+about-or-later = { $license } أو أحدث
+about-not-ours = TDM لا يملك هذه الأدوات، وهي لأصحابها:
+tool-license-yt-dlp = { $binary } للملف الذي ينزّله TDM (والكود المصدري بترخيص { $source })
+
+## Sounds (M5.5)
+settings-sounds = الأصوات
+settings-sound-done = صوت عند اكتمال تحميل
+settings-sound-failed = صوت عند فشل تحميل
+settings-sound-queue = صوت عند انتهاء طابور
+settings-sound-try = جرّب الصوت
+
+## How a new download shows (M5.5)
+settings-new-download = التحميل الجديد
+settings-progress-window = نافذة التقدم حين يبدأ تحميل من «معلومات ملف التحميل»:
+settings-progress-shown = تظهر
+settings-progress-minimized = تظهر مصغّرة
+settings-progress-hidden = لا تظهر
+settings-start-while-open = ابدأ التحميل والنافذة مفتوحة
+settings-start-while-open-hint = يبدأ التحميل في الخلفية بمجرد أن يرد السيرفر، وأنت ما زلت في «معلومات ملف التحميل». «ابدأ التحميل» ينقله إلى المجلد والاسم اللذين اخترتهما، و«إلغاء» يحذفه ويحذف ملفه الناقص.
+settings-browser-at-once = ابدأ تحميلات المتصفح على طول من غير سؤال
+settings-browser-at-once-hint = يبدأ التحميل القادم من المتصفح دون «معلومات ملف التحميل». أما البرامج (مثل exe) فتسأل أولًا دائمًا.
+add-started-note = بدأ التحميل في الخلفية. غيّر الاسم أو المجلد كما تريد، وسينتقل الملف إليه حين تضغط «ابدأ التحميل».
+
+## Batch download (M7)
+cmd-batch = تحميل بالجملة…
+cmd-batch-clipboard = تحميل بالجملة من الحافظة
+batch-title = تحميل بالجملة
+batch-pattern = الرابط بنمط
+batch-pattern-hint = ضع نجمة مكان الجزء الذي يتغيّر في الرابط، مثل { $example }. ويمكن أيضًا نطاق بين قوسين مربعين أو قائمة بين قوسين معقوفين.
+batch-kind = يتغيّر بـ
+batch-numbers = أرقام
+batch-letters = حروف
+batch-from = من
+batch-to = إلى
+batch-width = عدد الخانات
+batch-width-hint = بأصفار على اليسار، مثل { $example }.
+batch-links = الروابط
+batch-links-count =
+    { PLURAL($count) ->
+        [zero] لا روابط
+        [one] رابط واحد
+        [two] رابطان
+        [few] { $count } روابط
+        [many] { $count } رابطًا
+       *[other] { $count } رابط
+    }
+batch-max = الحد الأقصى في المرة الواحدة: { $max }.
+batch-shown = تظهر هنا أول { $shown } منها.
+batch-empty = اكتب رابطًا بنمط لترى الروابط التي سيصنعها.
+batch-clipboard-empty = لا يوجد رابط في الحافظة.
+batch-folder-category = حسب الفئة
+batch-error-at = عند الحرف { $at } من الرابط.
+batch-error-too_many = عدد الروابط أكبر من الحد الأقصى ({ $max }).
+drop-menu-hide = إخفاء السلة
+batch-error-not_http = الرابط يجب أن يبدأ بـ { $http } أو { $https }.
+batch-error-too_long = الرابط أطول من اللازم.
+batch-error-hidden = في الرابط حرف مخفي أو سطر جديد.
+batch-error-no_host = الرابط بلا اسم موقع.
+batch-error-in_host = النمط في مسار الرابط فقط، لا في اسم الموقع.
+batch-error-in_fragment = النمط لا يعمل بعد علامة #.
+batch-error-backslash = الشرطة المائلة العكسية مسموحة قبل الأقواس والنجمة والفاصلة فقط.
+batch-error-unclosed = قوس مفتوح لم يُغلق.
+batch-error-unopened = قوس يُغلق ولم يُفتح.
+batch-error-nested = نمط داخل نمط.
+batch-error-empty = نطاق أو قائمة فارغة.
+batch-error-bad_range = النطاق يُكتب: البداية، ثم شرطة، ثم النهاية.
+batch-error-mixed = النطاق يخلط أرقامًا وحروفًا، أو حروفًا كبيرة وصغيرة.
+batch-error-descending = النطاق ينزل: بدايته بعد نهايته.
+batch-error-zero_step = الخطوة لا تكون صفرًا.
+batch-error-width = عدد الخانات لا يناسب الأرقام.
+batch-error-too_large = رقم أكبر من اللازم.
+batch-error-bad_counter = «من» و«إلى» يكونان رقمين أو حرفين.
+batch-error-star_needs_range = اكتب «من» و«إلى» للنجمة.
+batch-error-second_star = نجمة واحدة فقط في الرابط.
+batch-error-no_star = «من» و«إلى» تعملان مع نجمة في الرابط.
+batch-error-no_pattern = الرابط بلا نمط: ضع نجمة أو نطاقًا مكان الجزء الذي يتغيّر.
+batch-error-bad_url = أحد الروابط التي يصنعها النمط غير صالح.
+
+## Site grabber (M7)
+cmd-grab = تحميل موقع…
+grab-title = تحميل الموقع
+grab-start = صفحة البداية
+grab-depth = العمق
+grab-depth-hint = عدد الروابط بين صفحة البداية والملف.
+grab-kinds = أنواع الملفات
+grab-kind-archives = أرشيفات
+grab-kind-documents = مستندات
+grab-kind-audio = صوتيات
+grab-kind-video = فيديوهات
+grab-kind-programs = برامج
+grab-kind-images = صور
+grab-extensions = امتدادات أخرى
+grab-extensions-hint = مفصولة بفواصل، مثل { $example }.
+grab-sites-on = اسمح بمواقع أخرى غير موقع البداية
+grab-sites-hint = اسم الموقع وحده، مفصولة بفواصل، مثل { $example }.
+grab-robots = TDM يحترم robots.txt الخاص بالموقع.
+grab-limits = الحدود
+grab-max-files = أقصى عدد ملفات
+grab-max-total = أقصى حجم بالجيجابايت
+grab-files-hint = الافتراضي { $default }، والأقصى { $max }.
+grab-total-hint = الافتراضي { $default }.
+grab-check = افحص
+grab-checking = يفحص TDM الموقع، طلبًا واحدًا في الثانية…
+grab-progress = صفحات: { $pages }، ملفات: { $files }
+grab-stop = أوقف الفحص
+grab-chosen = المحدد: { $chosen } من { $all }
+grab-select-all = تحديد الكل
+grab-select-none = إلغاء التحديد
+grab-none = لم يجد TDM ملفات من الأنواع المطلوبة.
+grab-robots-closed = robots.txt الخاص بالموقع لا يسمح بفحصه.
+grab-skipped = روابط تُركت: { $skipped } (خارج الموقع، أو ليست من الأنواع المطلوبة، أو منعها robots.txt).
+grab-limit-files = وصل الفحص إلى أقصى عدد ملفات، وقد يكون في الموقع غيرها.
+grab-limit-pages = وصل الفحص إلى أقصى عدد صفحات، وقد يكون في الموقع غيرها.
+grab-limit-total = وصل الفحص إلى أقصى حجم.
+grab-limit-waiting = روابط كثيرة تنتظر، فتُرك آخرها.
+grab-limit-seen = وصل الفحص إلى أقصى عدد روابط في فحص واحد.
+grab-stopped = أُوقف الفحص قبل نهايته، وهذه الملفات التي وجدها حتى ذلك الحين.
+grab-queue-note = تُضاف إلى طابور خاص بالموقع، تحميل واحد في كل مرة، حتى لا يُثقَل على الموقع.
+grab-error-start = اكتب رابط صفحة يبدأ بـ { $http } أو { $https }، بلا اسم مستخدم أو كلمة مرور.
+grab-error-depth = العمق من { $min } إلى { $max }.
+grab-error-max_files = عدد الملفات من { $min } إلى { $max }.
+grab-error-max_total = الحجم لا يكون صفرًا.
+grab-error-types = اختر نوعًا واحدًا على الأقل، أو اكتب امتدادًا.
+grab-error-site = «{ $site }» ليس اسم موقع: اكتب الاسم وحده، مثل { $example }.
+
+## The settings window's sections (a window of its own, its sections at its side).
+settings-section-general = عام
+settings-section-types = أنواع الملفات
+settings-section-saveto = الحفظ في
+settings-section-downloads = التحميلات
+settings-section-connection = الاتصال
+settings-section-proxy = البروكسي
+settings-section-logins = تسجيل الدخول للمواقع
+settings-section-sounds = الأصوات
+settings-section-speed = محدد السرعة
+settings-section-appearance = المظهر
+settings-double-click = النقر المزدوج على تحميل مكتمل
+settings-double-click-open = يفتح الملف
+settings-double-click-folder = يفتح المجلد الذي فيه الملف
+settings-double-click-details = يعرض تفاصيل التحميل
+settings-double-click-hint = التحميل الذي لم يكتمل يعرض نافذة تقدّمه دائمًا.
+settings-proxy = البروكسي
+settings-proxy-none = بدون بروكسي
+settings-proxy-use = استخدم هذا البروكسي
+settings-proxy-save = احفظ
+settings-proxy-saved = حُفظ. يُطبَّق عند تشغيل TDM في المرة القادمة.
+settings-proxy-hint = اكتبه هكذا: http://العنوان:المنفذ. تمر به كل التحميلات، ويبقى التحقق من شهادات المواقع كما هو. لا يُقبل اسم مستخدم أو كلمة مرور فيه.
+settings-logins-hint = يستخدم TDM تسجيل دخولك في المتصفح (الكوكيز) لكل تحميل يصله من الإضافة، ولا يحفظ كلمات مرور. إن لم يصل تحميل من موقع مسجّل فيه، فأصلح ربط المتصفح من هنا.
+settings-types-hint = الفئات تحدد نوع كل ملف من امتداده أو موقعه، ومجلدًا لكل نوع. عدّلها من محرر الفئات.

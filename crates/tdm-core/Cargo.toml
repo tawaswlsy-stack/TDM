@@ -1,0 +1,54 @@
+[package]
+name = "tdm-core"
+description = "TDM download engine (UI-less library)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+getrandom.workspace = true
+percent-encoding.workspace = true
+reqwest.workspace = true
+rustls.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+minisign-verify.workspace = true
+base64.workspace = true
+zip.workspace = true
+flate2.workspace = true
+icu_properties.workspace = true
+jiff.workspace = true
+dunce.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tdm-platform.workspace = true
+
+[features]
+# Lets tests trust their temporary CA (`Engine::with_test_root`). Enabled only
+# by the dev-dependency below; never by a shipped binary (checked in CI).
+test-support = []
+
+# A stand-in for yt-dlp for the tests of `video` (tests/video.rs). Built
+# only with test-support, which no shipped binary enables (checked in CI).
+[[bin]]
+name = "fake-yt-dlp"
+path = "tests/support/fake_yt_dlp.rs"
+required-features = ["test-support"]
+test = false
+doctest = false
+
+[[bin]]
+name = "fake-js-runtime"
+path = "tests/support/fake_js_runtime.rs"
+required-features = ["test-support"]
+test = false
+doctest = false
+
+[dev-dependencies]
+tdm-core = { path = ".", features = ["test-support"] }
+tdm-platform = { workspace = true, features = ["test-support"] }
+tdm-testserver.workspace = true
+tempfile.workspace = true

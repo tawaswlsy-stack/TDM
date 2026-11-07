@@ -1,0 +1,24 @@
+[package]
+name = "tdm-cli"
+description = "The tdm command: download and resume from the command line"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "tdm"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+tokio.workspace = true
+tdm-core.workspace = true
+tdm-grab.workspace = true
+tdm-platform.workspace = true
+
+[dev-dependencies]
+jiff.workspace = true
+tempfile.workspace = true
+tdm-testserver.workspace = true

@@ -1,0 +1,21 @@
+{
+  "version": "1.0.1",
+  "bundle": {
+    "externalBin": ["binaries/tdm-host", "binaries/tdm", "binaries/tdm-jsbox"],
+    "license": "GPL-3.0-or-later",
+    "resources": {
+      "../../../LICENSE": "LICENSE",
+      "../../../scripts/release/licenses/THIRD-PARTY-NOTICES.md": "THIRD-PARTY-NOTICES.md",
+      "../../../scripts/release/licenses/LGPL-2.1.txt": "LGPL-2.1.txt"
+    },
+    "macOS": {
+      "signingIdentity": "-",
+      "minimumSystemVersion": "11.0"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
+  }
+}

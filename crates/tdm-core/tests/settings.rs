@@ -1,0 +1,293 @@
+//! The desktop's settings (M4): `settings.json`, by the same rules as the
+//! categories and queues files (ADR-0007).
+
+use std::fs;
+
+use tdm_core::settings::{Digits, FinishActions, Language, SettingsError, SettingsStore, Theme};
+use tdm_core::state::checksum_of;
+
+/// What a damaged or hostile settings file must never do: be used, or be
+/// written over.
+fn assert_refused_and_kept(store: &SettingsStore, expect: &str) {
+    let before = fs::read(store.path()).ok();
+    let err = store.load().unwrap_err();
+    assert!(err.to_string().contains(expect), "{err}");
+    let change = store.update(|file| {
+        file.connections = 3;
+        Ok(())
+    });
+    assert!(change.is_err());
+    assert_eq!(fs::read(store.path()).ok(), before, "the file was changed");
+}
+
+#[test]
+fn without_a_file_the_defaults_are_arabic_the_system_theme_and_123() {
+    let data = tempfile::tempdir().unwrap();
+    let store = SettingsStore::new(data.path());
+    let file = store.load().unwrap();
+    assert_eq!(file.language, Language::Ar);
+    assert_eq!(file.theme, Theme::System);
+    assert_eq!(file.digits, Digits::Latn);
+    assert_eq!(file.connections, 8);
+    assert!(file.download_dir.is_none());
+    assert!(!store.path().exists());
+}
+
+#[test]
+fn a_change_is_kept_in_a_file_only_its_owner_can_read() {
+    let data = tempfile::tempdir().unwrap();
+    let store = SettingsStore::new(data.path());
+    let downloads = data.path().join("تحميلاتي");
+    store
+        .update(|file| {
+            file.language = Language::En;
+            file.theme = Theme::Dark;
+            file.digits = Digits::Arab;
+            file.connections = 16;
+            file.download_dir = Some(downloads.clone());
+            Ok(())
+        })
+        .unwrap();
+    // A new store reads it from disk, as after a restart.
+    let again = SettingsStore::new(data.path()).load().unwrap();
+    assert_eq!(again.language, Language::En);
+    assert_eq!(again.theme, Theme::Dark);
+    assert_eq!(again.digits, Digits::Arab);
+    assert_eq!(again.connections, 16);
+    assert_eq!(again.download_dir.as_deref(), Some(downloads.as_path()));
+    assert!(tdm_platform::fs::only_owner_can_access(&store.path()).unwrap());
+    let text = fs::read_to_string(store.path()).unwrap();
+    assert!(text.contains("\"format\": \"tdm-settings\""), "{text}");
+    assert!(text.contains("\"schema_version\": 1"), "{text}");
+}
+
+#[test]
+fn values_out_of_range_are_never_written() {
+    let data = tempfile::tempdir().unwrap();
+    let store = SettingsStore::new(data.path());
+    for bad in [0, 33, u32::MAX] {
+        let err = store
+            .update(|file| {
+                file.connections = bad;
+                Ok(())
+            })
+            .unwrap_err();
+        assert!(matches!(err, SettingsError::Invalid(_)), "{err}");
+    }
+    for bad in ["relative/dir", "/a/../b", "/a/\u{202e}b", "/a/\u{3164}b"] {
+        let err = store
+            .update(|file| {
+                file.download_dir = Some(bad.into());
+                Ok(())
+            })
+            .unwrap_err();
+        assert!(matches!(err, SettingsError::Invalid(_)), "{bad}: {err}");
+    }
+    assert!(!store.path().exists());
+}
+
+/// A settings file saved by an editor that starts it with a UTF-8 byte
+/// order mark (old Notepad, Windows PowerShell 5.1) is read as it is.
+#[test]
+fn a_file_saved_with_a_byte_order_mark_is_read() {
+    let data = tempfile::tempdir().unwrap();
+    let store = SettingsStore::new(data.path());
+    store
+        .update(|file| {
+            file.language = Language::En;
+            Ok(())
+        })
+        .unwrap();
+    let mut bytes = b"\xEF\xBB\xBF".to_vec();
+    bytes.extend(fs::read(store.path()).unwrap());
+    fs::write(store.path(), bytes).unwrap();
+    assert_eq!(store.load().unwrap().language, Language::En);
+}
+
+#[test]
+fn a_damaged_file_is_refused_and_never_written_over() {
+    let data = tempfile::tempdir().unwrap();
+    let store = SettingsStore::new(data.path());
+    store
+        .update(|file| {
+            file.connections = 4;
+            Ok(())
+        })
+        .unwrap();
+    let good = fs::read_to_string(store.path()).unwrap();
+
+    fs::write(
+        store.path(),
+        good.replace("\"connections\": 4", "\"connections\": 5"),
+    )
+    .unwrap();
+    assert_refused_and_kept(&store, "checksum does not match");
+
+    fs::write(store.path(), &good[..good.len() / 2]).unwrap();
+    assert_refused_and_kept(&store, "damaged");
+
+    let signed = |change: &dyn Fn(&mut serde_json::Value)| {
+        let mut value: serde_json::Value = serde_json::from_str(&good).unwrap();
+        change(&mut value);
+        value["checksum"] = checksum_of(&value).into();
+        fs::write(store.path(), value.to_string()).unwrap();
+    };
+    signed(&|v| v["run"] = "rm -rf /".into());
+    assert_refused_and_kept(&store, "unknown field");
+    signed(&|v| v["language"] = "fr".into());
+    assert_refused_and_kept(&store, "unknown variant");
+    signed(&|v| v["connections"] = 1000.into());
+    assert_refused_and_kept(&store, "connections must be from 1 to 32");
+    signed(&|v| v["download_dir"] = "../../etc".into());
+    assert_refused_and_kept(&store, "invalid folder");
+
+    let mut value: serde_json::Value = serde_json::from_str(&good).unwrap();
+    value["schema_version"] = 99.into();
+    fs::write(store.path(), value.to_string()).unwrap();
+    assert_refused_and_kept(&store, "schema version 99");
+
+    let mut value: serde_json::Value = serde_json::from_str(&good).unwrap();
+    value["format"] = "tdm-queues".into();
+    fs::write(store.path(), value.to_string()).unwrap();
+    assert_refused_and_kept(&store, "not a TDM settings file");
+
+    fs::write(store.path(), vec![b' '; 64 * 1024 + 1]).unwrap();
+    assert_refused_and_kept(&store, "too large");
+}
+
+#[test]
+fn a_link_in_place_of_the_file_is_refused_and_what_it_points_to_is_untouched() {
+    let data = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let elsewhere = SettingsStore::new(outside.path());
+    elsewhere
+        .update(|file| {
+            file.connections = 2;
+            Ok(())
+        })
+        .unwrap();
+    let target_before = fs::read(elsewhere.path()).unwrap();
+    let store = SettingsStore::new(data.path());
+    tdm_platform::fs::symlink_file(&elsewhere.path(), &store.path())
+        .expect("this test must be able to create a symbolic link");
+    assert!(matches!(
+        store.load(),
+        Err(SettingsError::NotRegularFile(_))
+    ));
+    assert!(
+        store
+            .update(|file| {
+                file.connections = 9;
+                Ok(())
+            })
+            .is_err()
+    );
+    assert_eq!(fs::read(elsewhere.path()).unwrap(), target_before);
+}
+
+/// Clipboard monitoring (M5) is off by default, and in a file written
+/// before the field existed; turned on, it is kept.
+#[test]
+fn clipboard_monitoring_is_off_unless_turned_on() {
+    let data = tempfile::tempdir().unwrap();
+    let store = SettingsStore::new(data.path());
+    assert!(!store.load().unwrap().clipboard);
+    store.update(|_| Ok(())).unwrap();
+    let mut value: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(store.path()).unwrap()).unwrap();
+    value.as_object_mut().unwrap().remove("clipboard");
+    value["checksum"] = checksum_of(&value).into();
+    fs::write(store.path(), value.to_string()).unwrap();
+    assert!(!store.load().unwrap().clipboard, "absent: off");
+    store
+        .update(|file| {
+            file.clipboard = true;
+            Ok(())
+        })
+        .unwrap();
+    assert!(store.load().unwrap().clipboard);
+}
+
+/// #124: the update check is on unless turned off, also in a file written
+/// before it existed.
+#[test]
+fn the_update_check_is_on_unless_turned_off() {
+    let data = tempfile::tempdir().unwrap();
+    let store = SettingsStore::new(data.path());
+    assert!(store.load().unwrap().update_check);
+    store.update(|_| Ok(())).unwrap();
+    let mut value: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(store.path()).unwrap()).unwrap();
+    value.as_object_mut().unwrap().remove("update_check");
+    value["checksum"] = checksum_of(&value).into();
+    fs::write(store.path(), value.to_string()).unwrap();
+    assert!(store.load().unwrap().update_check, "absent: on");
+    store
+        .update(|file| {
+            file.update_check = false;
+            Ok(())
+        })
+        .unwrap();
+    assert!(!store.load().unwrap().update_check);
+}
+
+/// Videos at once (owner's request, 2026-10-29): 3 when absent, 1 to 8,
+/// and a file without it stays as it was.
+#[test]
+fn videos_at_once_is_three_unless_set_from_one_to_eight() {
+    let data = tempfile::tempdir().unwrap();
+    let store = SettingsStore::new(data.path());
+    assert_eq!(store.load().unwrap().videos_at_once(), 3);
+    store.update(|_| Ok(())).unwrap();
+    assert!(
+        !fs::read_to_string(store.path())
+            .unwrap()
+            .contains("videos_at_once")
+    );
+    store
+        .update(|file| {
+            file.videos_at_once = Some(6);
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(store.load().unwrap().videos_at_once(), 6);
+    for bad in [0, 9] {
+        let refused = store.update(|file| {
+            file.videos_at_once = Some(bad);
+            Ok(())
+        });
+        assert!(refused.is_err(), "{bad}");
+    }
+    assert_eq!(store.load().unwrap().videos_at_once(), 6);
+}
+
+/// When a download finishes (owner's request, 2026-10-30): its window
+/// closes and nothing opens unless set, and a file without it stays as it
+/// was.
+#[test]
+fn a_finished_download_s_window_closes_unless_set() {
+    let data = tempfile::tempdir().unwrap();
+    let store = SettingsStore::new(data.path());
+    assert_eq!(
+        store.load().unwrap().finish(),
+        FinishActions {
+            close_window: true,
+            open_file: false,
+            open_folder: false
+        }
+    );
+    store.update(|_| Ok(())).unwrap();
+    assert!(!fs::read_to_string(store.path()).unwrap().contains("finish"));
+    let chosen = FinishActions {
+        close_window: false,
+        open_file: false,
+        open_folder: true,
+    };
+    store
+        .update(|file| {
+            file.finish = Some(chosen);
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(store.load().unwrap().finish(), chosen);
+}

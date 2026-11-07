@@ -1,0 +1,878 @@
+//! The queues file (ADR-0007): `queues.json` in the data folder.
+//!
+//! The same rules as the state file (ADR-0004, `docs/QUEUES-FILE.md`):
+//! - a `schema_version`, and a SHA-256 `checksum` over the canonical form;
+//! - strict reading: a damaged, oversized, linked or unknown file is
+//!   refused, never guessed at, and never overwritten;
+//! - safe writes (a temporary file, `fsync`, a rename, then the folder
+//!   synced), readable by the user only, because a URL may hold a token
+//!   (AGENTS.md §10.3);
+//! - every change goes through [`QueueStore::update`], which holds
+//!   `queues.lock` while it reads, changes and writes, so two `tdm`
+//!   processes never write at the same time and no change is lost.
+//!
+//! A download's progress is not here: it stays in its own `.tdm-state`
+//! file (ADR-0004), which an item only points to.
+
+use std::fs::{File, OpenOptions, TryLockError};
+use std::io::{self, Read};
+use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
+
+use super::schedule::Schedule;
+use crate::state::{checksum_of, now_rfc3339, write_safely};
+
+/// Value of the `format` field.
+pub const FORMAT: &str = "tdm-queues";
+/// The schema this version of TDM reads and writes.
+pub const SCHEMA_VERSION: u32 = 1;
+/// The queue an item goes to when none is named.
+pub const DEFAULT_QUEUE: &str = "main";
+/// Downloads of one queue that run at once, unless the user sets another
+/// number.
+pub const DEFAULT_MAX_ACTIVE: u32 = 3;
+/// The most downloads one queue may run at once.
+pub const MAX_ACTIVE: u32 = 32;
+/// The most tries a queue may give each download (#142).
+pub const MAX_TRIES: u32 = 100;
+/// The longest queue name, in characters.
+pub const MAX_NAME_CHARS: usize = 64;
+/// The longest description of a download, in characters (#95).
+pub const MAX_DESCRIPTION_CHARS: usize = 1000;
+
+const FILE_NAME: &str = "queues.json";
+const LOCK_NAME: &str = "queues.lock";
+const RUNNER_LOCK_NAME: &str = "runner.lock";
+/// Thousands of items fit in far less; anything above is refused.
+const MAX_FILE_BYTES: u64 = 16 * 1024 * 1024;
+
+/// Everything in `queues.json`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QueuesFile {
+    /// Always [`FORMAT`].
+    pub format: String,
+    /// Always [`SCHEMA_VERSION`] when written by this version.
+    pub schema_version: u32,
+    /// The id the next item gets. Ids are never reused.
+    pub next_id: u64,
+    /// Settings for the whole program.
+    #[serde(default)]
+    pub settings: Settings,
+    pub queues: Vec<Queue>,
+    /// RFC 3339 time in UTC.
+    pub updated_at: String,
+    /// `sha256:` and the hex digest of the file with this field empty.
+    pub checksum: String,
+}
+
+/// Settings for the whole program.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Settings {
+    /// Bytes per second for all downloads together; `None`: no limit.
+    pub speed_limit: Option<u64>,
+}
+
+/// A named list of downloads, run in order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Queue {
+    pub name: String,
+    /// Downloads of this queue that run at once, from 1 to [`MAX_ACTIVE`].
+    pub max_active: u32,
+    /// When it may run; `None`: always.
+    #[serde(default)]
+    pub schedule: Option<Schedule>,
+    /// Tries for each of its downloads, from 1 (no new try) to
+    /// [`MAX_TRIES`] (#142): a download that fails with tries left goes to
+    /// the end of the queue and waits again. `None`: 1, as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tries: Option<u32>,
+    /// A file or program the app opens when the queue is done (#142),
+    /// absolute: chosen by the user in the system's picker and confirmed.
+    /// Never taken from an import or the network, never exported.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after_open: Option<PathBuf>,
+    pub items: Vec<Item>,
+}
+
+/// One download in a queue.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Item {
+    pub id: u64,
+    /// The URL as given, without a user name or password (those are never
+    /// saved, ADR-0004 rule 7). It may hold a token (`?sig=…`); it is
+    /// never printed with it.
+    pub url: String,
+    /// The folder to save into (absolute).
+    pub dir: PathBuf,
+    pub status: Status,
+    /// The download's `.tdm-state` once it has one: its progress.
+    pub state_file: Option<PathBuf>,
+    /// The finished file.
+    pub file: Option<PathBuf>,
+    /// Why it failed or stopped, for the user.
+    pub error: Option<String>,
+    /// Bytes per second for this download alone; `None`: no limit of its
+    /// own (the program's limit still applies).
+    #[serde(default)]
+    pub limit: Option<u64>,
+    /// Added without a folder of its own: the finished file goes to its
+    /// category's folder (M4), and to `dir` when it has none. `false` when
+    /// absent.
+    #[serde(default)]
+    pub categorize: bool,
+    /// A file that can run code, from the browser: it waits for the user
+    /// to start it (security review #84). Cleared when it starts.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub needs_ok: bool,
+    /// It came from a page (the browser extension): held if the server
+    /// names a file that can run code at the download itself, unless the
+    /// user has already started it (review of #90).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub from_page: bool,
+    /// The user started it while it was held: it is not held again.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub ok_given: bool,
+    /// From a private window (security review #84): taken out of the
+    /// queues once it is done, so nothing of it stays but the file.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub private: bool,
+    /// RFC 3339 time in UTC.
+    pub added_at: String,
+    /// It came from the browser extension (M5): what TDM needs to ask
+    /// that browser for its cookies again after a restart. Never the
+    /// cookies themselves, which stay in memory (owner's decision on #7).
+    /// Forgotten once the download is done.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub browser: Option<BrowserSource>,
+    /// The name the user gave the file (M5.5, #103), cleaned like any name
+    /// ([`sanitize_file_name`](crate::sanitize::sanitize_file_name)): a new
+    /// download is saved under it instead of the server's name. Set only
+    /// before the download starts ([`QueuesFile::set_name`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// The category the user chose (its id, #103), instead of the one its
+    /// name or site gives. A new download added without a folder of its
+    /// own (`categorize`) goes to its folder; one with a folder the user
+    /// chose stays there (an interface that wants the category's folder
+    /// sets `dir` to it, as the user may then change it). Once the file is
+    /// made it does not move. A category that no longer exists counts as
+    /// none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    /// The user's description (#95): at most [`MAX_DESCRIPTION_CHARS`]
+    /// characters, lines of plain text ([`check_description`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// When it last started or resumed (#95): RFC 3339 time in UTC, written
+    /// by the runner when it marks it active.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_try: Option<String>,
+    /// Tries of it that failed in a row in its queue (#142); 0 again when
+    /// it finishes or the user starts it.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub failed_tries: u32,
+    /// Its own number of connections, 1 to [`crate::MAX_CONNECTIONS`]
+    /// (#211: the site grabber's polite queue takes one for each file,
+    /// ADR-0010 section 5); `None`: the program's, as set when it starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connections: Option<u32>,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
+}
+
+/// A download's own number of connections: 1 to [`crate::MAX_CONNECTIONS`].
+pub(crate) fn check_connections(n: u32) -> Result<(), String> {
+    if (1..=crate::MAX_CONNECTIONS).contains(&(n as usize)) {
+        Ok(())
+    } else {
+        Err(format!(
+            "has {n} connections; from 1 to {} are possible",
+            crate::MAX_CONNECTIONS
+        ))
+    }
+}
+
+/// Where a download from the browser extension came from.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserSource {
+    /// The extension's own random id: one per browser profile, so the
+    /// cookies come from the same browser and profile again.
+    pub instance: String,
+    /// Its cookie store (a Firefox container), when not the default one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub store: Option<String>,
+    /// Cookies went with it: after a restart it waits for that browser
+    /// («افتح المتصفح ليكمل») instead of going without them.
+    pub cookies: bool,
+    /// The page it came from, sent as the browser would (`FromBrowser`),
+    /// without its `#` part (owner's decision on #80); never printed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub referrer: Option<String>,
+    /// The download's random ticket from the extension: it gives the
+    /// cookies again only for an open download's ticket.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ticket: Option<String>,
+}
+
+/// Never the page itself (owner's decision on #80: it is not printed in
+/// any log or message); only whether there is one.
+impl std::fmt::Debug for BrowserSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BrowserSource")
+            .field("instance", &self.instance)
+            .field("store", &self.store)
+            .field("cookies", &self.cookies)
+            .field("referrer", &self.referrer.as_ref().map(|_| "…"))
+            .field("ticket", &self.ticket)
+            .finish()
+    }
+}
+
+/// A download's state file and its part file, from its state file.
+pub fn private_files(state_file: &Path) -> Vec<PathBuf> {
+    let mut files = vec![state_file.to_path_buf()];
+    files.extend(
+        crate::state::final_path_for_state(state_file).map(|f| crate::state::part_path(&f)),
+    );
+    files
+}
+
+/// Where an item stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Status {
+    /// Runs when its queue has room.
+    Waiting,
+    /// A runner is downloading it.
+    Active,
+    /// The user paused it; it waits until resumed.
+    Paused,
+    Done,
+    /// It stopped with an error; resuming it puts it back to waiting.
+    Failed,
+}
+
+/// Why the queues file could not be used or changed.
+#[derive(Debug, thiserror::Error)]
+pub enum StoreError {
+    #[error("could not read or write the queues file: {0}")]
+    Io(#[from] io::Error),
+    #[error("{} is not a TDM queues file", .0.display())]
+    NotAQueuesFile(PathBuf),
+    #[error(
+        "{} uses schema version {version}, which this version of TDM cannot read",
+        path.display()
+    )]
+    UnsupportedVersion { path: PathBuf, version: u64 },
+    #[error(
+        "the queues file {} is damaged ({reason}); TDM leaves it as it is, so nothing in it is \
+         lost: move it away to start with empty queues",
+        path.display()
+    )]
+    Corrupt { path: PathBuf, reason: String },
+    #[error(
+        "refusing to use {}: it is a symbolic link, a hard link or not a regular file",
+        .0.display()
+    )]
+    NotRegularFile(PathBuf),
+    #[error("there is no item {0}")]
+    NoSuchItem(u64),
+    #[error("there is no queue {0:?}")]
+    NoSuchQueue(String),
+    #[error(
+        "invalid queue name {0:?}: use 1 to {MAX_NAME_CHARS} letters, digits, `-`, `_` or single spaces between words"
+    )]
+    InvalidName(String),
+    #[error("the number of downloads at once must be from 1 to {MAX_ACTIVE}, not {0}")]
+    InvalidMaxActive(u32),
+    #[error(
+        "this URL has a user name or password; TDM never saves them, so it cannot be queued \
+         (download it with `tdm get` instead)"
+    )]
+    Credentials,
+    #[error(transparent)]
+    Url(#[from] crate::Error),
+    #[error("another `tdm queue run` is already running")]
+    RunnerBusy,
+    #[error(
+        "this change would make the queues file {bytes} bytes long, more than the \
+         {MAX_FILE_BYTES} bytes TDM reads back; nothing was changed"
+    )]
+    TooLarge { bytes: usize },
+    #[error("refusing this change: {0}; nothing was changed")]
+    Refused(String),
+}
+
+/// The rules a URL must meet to be added to a queue ([`QueuesFile::add`]):
+/// http or https, no user name or password (they would have to be saved),
+/// and nothing that drives a terminal or reorders text, since `queue list`
+/// shows it and exports keep it (review of #41, round 4). The add dialog
+/// checks them before asking the server (review of #48).
+pub fn check_url(url: &str) -> Result<(), StoreError> {
+    let parsed = crate::engine::parse_url(url)?;
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(StoreError::Credentials);
+    }
+    if url.chars().any(crate::category::is_unsafe_in_url) {
+        return Err(StoreError::Refused(
+            "the URL has control characters or direction marks".into(),
+        ));
+    }
+    Ok(())
+}
+
+impl QueuesFile {
+    /// No queues yet but the default one, empty.
+    pub fn empty() -> Self {
+        QueuesFile {
+            format: FORMAT.to_owned(),
+            schema_version: SCHEMA_VERSION,
+            next_id: 1,
+            settings: Settings::default(),
+            queues: vec![Queue::new(DEFAULT_QUEUE)],
+            updated_at: now_rfc3339(),
+            checksum: String::new(),
+        }
+    }
+
+    pub fn queue(&self, name: &str) -> Option<&Queue> {
+        self.queues.iter().find(|q| q.name == name)
+    }
+
+    pub fn queue_mut(&mut self, name: &str) -> Option<&mut Queue> {
+        self.queues.iter_mut().find(|q| q.name == name)
+    }
+
+    /// The queue `name`, created (empty, with the defaults) if needed.
+    pub fn queue_or_new(&mut self, name: &str) -> Result<&mut Queue, StoreError> {
+        check_name(name)?;
+        if self.queue(name).is_none() {
+            self.queues.push(Queue::new(name));
+        }
+        Ok(self.queue_mut(name).expect("just added"))
+    }
+
+    pub fn item(&self, id: u64) -> Option<&Item> {
+        self.queues
+            .iter()
+            .flat_map(|q| &q.items)
+            .find(|i| i.id == id)
+    }
+
+    pub fn item_mut(&mut self, id: u64) -> Option<&mut Item> {
+        self.queues
+            .iter_mut()
+            .flat_map(|q| &mut q.items)
+            .find(|i| i.id == id)
+    }
+
+    /// Adds `url` to the end of queue `queue` (created if needed), to be
+    /// saved in `dir`. Only http and https URLs, and never one with a user
+    /// name or password (they would have to be saved). Returns its id.
+    pub fn add(&mut self, queue: &str, url: &str, dir: &Path) -> Result<u64, StoreError> {
+        check_url(url)?;
+        let id = self.next_id;
+        let item = Item {
+            id,
+            url: url.to_owned(),
+            dir: std::path::absolute(dir)?,
+            status: Status::Waiting,
+            state_file: None,
+            file: None,
+            error: None,
+            limit: None,
+            categorize: false,
+            needs_ok: false,
+            from_page: false,
+            ok_given: false,
+            private: false,
+            added_at: now_rfc3339(),
+            browser: None,
+            name: None,
+            category: None,
+            description: None,
+            last_try: None,
+            failed_tries: 0,
+            connections: None,
+        };
+        self.queue_or_new(queue)?.items.push(item);
+        self.next_id = id.checked_add(1).ok_or_else(|| StoreError::Corrupt {
+            path: PathBuf::new(),
+            reason: "no ids are left".into(),
+        })?;
+        Ok(id)
+    }
+
+    /// Saves item `id` under `name` instead of the server's name (#103),
+    /// cleaned like any name; `None` or an empty name: the server's again.
+    /// Returns the name it will have.
+    ///
+    /// Only before the download starts: once it has a state file (or runs,
+    /// or is done) its name is taken, and this is refused. A name that can
+    /// run code where the server's could not is held for the user like a
+    /// file from a page (#90): the runner checks it against the server's
+    /// name, at the download itself, and a change of name asks the user
+    /// again.
+    pub fn set_name(&mut self, id: u64, name: Option<&str>) -> Result<Option<String>, StoreError> {
+        let item = self.item_mut(id).ok_or(StoreError::NoSuchItem(id))?;
+        let started = item.state_file.is_some()
+            || item.file.is_some()
+            || matches!(item.status, Status::Active | Status::Done);
+        if started {
+            return Err(StoreError::Refused(
+                "the download has already started, so its file has its name".into(),
+            ));
+        }
+        let name = name.filter(|n| !n.trim().is_empty());
+        let name = match name {
+            None => None,
+            Some(raw) => {
+                let clean = crate::sanitize::sanitize_file_name(raw);
+                // Nothing of it was a name (`.`, `\u{202E}`): refused, not
+                // turned into `download` behind the user's back.
+                if clean == crate::sanitize::FALLBACK_NAME && raw.trim() != clean {
+                    return Err(StoreError::Refused(format!(
+                        "{:?} has nothing that can be a file name",
+                        crate::category::printable(raw)
+                    )));
+                }
+                Some(clean)
+            }
+        };
+        if name != item.name {
+            item.ok_given = false;
+        }
+        item.name = name.clone();
+        Ok(name)
+    }
+
+    /// Puts item `id` in the category `category` (its id, #103); `None`:
+    /// the category its name or site gives, as before. Whether the category
+    /// exists is not checked here (it lives in another file): one that does
+    /// not counts as none. See [`Item::category`] for the folder.
+    pub fn set_category(&mut self, id: u64, category: Option<&str>) -> Result<(), StoreError> {
+        if let Some(category) = category {
+            crate::category::check_id(category).map_err(|e| StoreError::Refused(e.to_string()))?;
+        }
+        let item = self.item_mut(id).ok_or(StoreError::NoSuchItem(id))?;
+        item.category = category.map(str::to_owned);
+        Ok(())
+    }
+
+    /// Gives item `id` its own number of connections (#211), 1 to
+    /// [`crate::MAX_CONNECTIONS`]; `None`: the program's again. It applies
+    /// when the download next starts.
+    pub fn set_connections(&mut self, id: u64, connections: Option<u32>) -> Result<(), StoreError> {
+        if let Some(n) = connections {
+            check_connections(n).map_err(StoreError::Refused)?;
+        }
+        let item = self.item_mut(id).ok_or(StoreError::NoSuchItem(id))?;
+        item.connections = connections;
+        Ok(())
+    }
+
+    /// Sets item `id`'s description (#95); `None` or an empty text removes
+    /// it. Checked with [`check_description`].
+    pub fn set_description(
+        &mut self,
+        id: u64,
+        description: Option<&str>,
+    ) -> Result<(), StoreError> {
+        let description = description.filter(|d| !d.trim().is_empty());
+        if let Some(description) = description {
+            check_description(description).map_err(StoreError::Refused)?;
+        }
+        let item = self.item_mut(id).ok_or(StoreError::NoSuchItem(id))?;
+        item.description = description.map(str::to_owned);
+        Ok(())
+    }
+
+    /// Removes item `id` from its queue and returns it. Its files stay.
+    /// Takes every private window's download out of the queues (review of
+    /// #91: nothing of them may stay once the window is closed), and gives
+    /// the files of those that are not running (their part and state
+    /// files) for the caller to delete. A running one is stopped by the
+    /// runner, which deletes its files.
+    pub fn take_private(&mut self) -> Vec<PathBuf> {
+        let mut files = Vec::new();
+        for queue in &mut self.queues {
+            queue.items.retain(|item| {
+                if !item.private {
+                    return true;
+                }
+                if item.status != Status::Active {
+                    files.extend(item.state_file.iter().flat_map(|s| private_files(s)));
+                }
+                false
+            });
+        }
+        files
+    }
+
+    pub fn remove(&mut self, id: u64) -> Result<Item, StoreError> {
+        for queue in &mut self.queues {
+            if let Some(index) = queue.items.iter().position(|i| i.id == id) {
+                return Ok(queue.items.remove(index));
+            }
+        }
+        Err(StoreError::NoSuchItem(id))
+    }
+
+    /// Rejects values that cannot be a real queues file even when the
+    /// checksum matches: repeated or too large ids, repeated or invalid
+    /// queue names, impossible limits.
+    fn check_consistency(&self) -> Result<(), String> {
+        if self.settings.speed_limit == Some(0) {
+            return Err("a speed limit of 0".into());
+        }
+        let mut names = std::collections::HashSet::new();
+        let mut ids = std::collections::HashSet::new();
+        for queue in &self.queues {
+            check_name(&queue.name).map_err(|e| e.to_string())?;
+            if !names.insert(&queue.name) {
+                return Err(format!("the queue {:?} appears twice", queue.name));
+            }
+            if !(1..=MAX_ACTIVE).contains(&queue.max_active) {
+                return Err(format!("impossible max_active {}", queue.max_active));
+            }
+            if queue
+                .max_tries
+                .is_some_and(|n| !(1..=MAX_TRIES).contains(&n))
+            {
+                return Err(format!("impossible max_tries for queue {:?}", queue.name));
+            }
+            if queue.after_open.as_ref().is_some_and(|p| !p.is_absolute()) {
+                return Err(format!("a relative after_open for queue {:?}", queue.name));
+            }
+            for item in &queue.items {
+                if item.id >= self.next_id || !ids.insert(item.id) {
+                    return Err(format!("impossible or repeated id {}", item.id));
+                }
+                if item.limit == Some(0) {
+                    return Err(format!("a speed limit of 0 for item {}", item.id));
+                }
+                if let Some(n) = item.connections {
+                    check_connections(n).map_err(|why| format!("item {} {why}", item.id))?;
+                }
+                check_item_details(item).map_err(|why| format!("item {} {why}", item.id))?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Queue {
+    fn new(name: &str) -> Self {
+        Queue {
+            name: name.to_owned(),
+            max_active: DEFAULT_MAX_ACTIVE,
+            schedule: None,
+            max_tries: None,
+            after_open: None,
+            items: Vec::new(),
+        }
+    }
+}
+
+/// A queue name: 1 to [`MAX_NAME_CHARS`] letters (any script), digits, `-`,
+/// `_`, and single spaces between words («طابور ليلي», as a category's
+/// name; owner's report, 2026-10-29). Nothing that could confuse a terminal
+/// or a file name.
+pub fn check_name(name: &str) -> Result<(), StoreError> {
+    let count = name.chars().count();
+    let ok = (1..=MAX_NAME_CHARS).contains(&count)
+        && name.trim() == name
+        && !name.contains("  ")
+        && name
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == ' ')
+        // The Hangul fillers count as letters but show nothing (review of
+        // #41, round 4).
+        && !crate::category::has_hidden(name);
+    if ok {
+        Ok(())
+    } else {
+        Err(StoreError::InvalidName(name.to_owned()))
+    }
+}
+
+/// A description (#95): 1 to [`MAX_DESCRIPTION_CHARS`] characters, lines of
+/// text with nothing hidden in them (the rule of queue names, line by
+/// line), since interfaces show it. Line breaks are `\n` only.
+pub fn check_description(text: &str) -> Result<(), String> {
+    let count = text.chars().count();
+    if text.trim().is_empty() || count > MAX_DESCRIPTION_CHARS {
+        return Err(format!(
+            "a description has 1 to {MAX_DESCRIPTION_CHARS} characters, not {count}"
+        ));
+    }
+    if text.split('\n').any(crate::category::has_hidden) {
+        return Err("the description has control characters or hidden text".into());
+    }
+    Ok(())
+}
+
+/// The user's details of an item (#95, #103), as its setters make them:
+/// for the queues file and for imports.
+pub(crate) fn check_user_details(
+    name: Option<&str>,
+    category: Option<&str>,
+    description: Option<&str>,
+) -> Result<(), String> {
+    // Only what no change of the cleaning rules can move (review of #103:
+    // a name stored once cleaned, refused after an update of those rules,
+    // would make the whole file unreadable). The engine cleans it again
+    // when it uses it.
+    if let Some(name) = name {
+        let plain = !name.is_empty()
+            && name.len() <= crate::sanitize::MAX_NAME_BYTES
+            && name != "."
+            && name != ".."
+            && !name
+                .chars()
+                .any(|c| c.is_control() || matches!(c, '/' | '\\'));
+        if !plain {
+            return Err("has a file name that is not a plain name".into());
+        }
+    }
+    if let Some(category) = category {
+        crate::category::check_id(category).map_err(|e| format!("has an {e}"))?;
+    }
+    if let Some(description) = description {
+        check_description(description).map_err(|e| format!("has a bad description: {e}"))?;
+    }
+    Ok(())
+}
+
+/// [`check_user_details`], and the runner's time.
+fn check_item_details(item: &Item) -> Result<(), String> {
+    check_user_details(
+        item.name.as_deref(),
+        item.category.as_deref(),
+        item.description.as_deref(),
+    )?;
+    if let Some(time) = &item.last_try
+        && (time.len() > 64 || !time.ends_with('Z') || time.parse::<jiff::Timestamp>().is_err())
+    {
+        return Err("has a last_try that is not an RFC 3339 time in UTC".into());
+    }
+    Ok(())
+}
+
+/// The queues file in one folder, and the locks next to it.
+#[derive(Debug, Clone)]
+pub struct QueueStore {
+    dir: PathBuf,
+}
+
+/// Held while a runner runs: only one runner at a time.
+#[derive(Debug)]
+pub struct RunnerLock {
+    _file: File,
+}
+
+impl QueueStore {
+    /// The store in `dir` (normally `AppPaths::data_dir`). Nothing is
+    /// created until the first change.
+    pub fn new(dir: impl Into<PathBuf>) -> Self {
+        QueueStore { dir: dir.into() }
+    }
+
+    /// `queues.json`.
+    pub fn path(&self) -> PathBuf {
+        self.dir.join(FILE_NAME)
+    }
+
+    /// Reads and fully checks the queues file; a missing file is
+    /// [`QueuesFile::empty`]. No lock is needed: every write replaces the
+    /// file in one step, so a reader sees the old file or the new one.
+    /// Blocking: async code calls it from a blocking task.
+    pub fn load(&self) -> Result<QueuesFile, StoreError> {
+        let path = self.path();
+        let file = match tdm_platform::fs::open_regular_nofollow(&path, false) {
+            Ok(file) => file,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(QueuesFile::empty()),
+            Err(err) if tdm_platform::fs::is_not_regular_file(&err) => {
+                return Err(StoreError::NotRegularFile(path));
+            }
+            Err(err) => return Err(err.into()),
+        };
+        let mut bytes = Vec::new();
+        file.take(MAX_FILE_BYTES + 1).read_to_end(&mut bytes)?;
+        let corrupt = |reason: String| StoreError::Corrupt {
+            path: path.clone(),
+            reason,
+        };
+        if bytes.len() as u64 > MAX_FILE_BYTES {
+            return Err(corrupt("the file is too large".into()));
+        }
+        let value: serde_json::Value = serde_json::from_slice(crate::without_bom(&bytes))
+            .map_err(|e| corrupt(crate::category::printable(&e.to_string())))?;
+        if value.get("format").and_then(|v| v.as_str()) != Some(FORMAT) {
+            return Err(StoreError::NotAQueuesFile(path));
+        }
+        match value.get("schema_version").and_then(|v| v.as_u64()) {
+            Some(v) if v == u64::from(SCHEMA_VERSION) => {}
+            Some(version) => return Err(StoreError::UnsupportedVersion { path, version }),
+            None => return Err(corrupt("missing schema_version".into())),
+        }
+        let Some(stored) = value.get("checksum").and_then(|v| v.as_str()) else {
+            return Err(corrupt("missing checksum".into()));
+        };
+        if stored != checksum_of(&value) {
+            return Err(corrupt("its checksum does not match".into()));
+        }
+        let queues: QueuesFile = serde_json::from_value(value)
+            .map_err(|e| corrupt(crate::category::printable(&e.to_string())))?;
+        queues.check_consistency().map_err(corrupt)?;
+        Ok(queues)
+    }
+
+    /// Changes the queues file with `change`, holding `queues.lock` from
+    /// the read to the end of the write: changes from several processes
+    /// follow each other and none is lost. A damaged file is never
+    /// overwritten. Blocking: it waits for the lock.
+    pub fn update<T>(
+        &self,
+        change: impl FnOnce(&mut QueuesFile) -> Result<T, StoreError>,
+    ) -> Result<T, StoreError> {
+        let _lock = self.lock(LOCK_NAME, true)?;
+        let mut queues = self.load()?;
+        let result = change(&mut queues)?;
+        // Never write a file that `load` would refuse (review of #41: a
+        // large import made the queues unreadable, the user's own too).
+        queues.check_consistency().map_err(StoreError::Refused)?;
+        queues.format = FORMAT.to_owned();
+        queues.schema_version = SCHEMA_VERSION;
+        queues.updated_at = now_rfc3339();
+        queues.checksum = String::new();
+        // A path that is not valid text cannot be written: an error, not
+        // a panic (review of #41, round 2).
+        queues.checksum = checksum_of(&serde_json::to_value(&queues).map_err(io::Error::other)?);
+        let mut json = serde_json::to_vec_pretty(&queues).map_err(io::Error::other)?;
+        json.push(b'\n');
+        if json.len() as u64 > MAX_FILE_BYTES {
+            return Err(StoreError::TooLarge { bytes: json.len() });
+        }
+        write_safely(&self.path(), &json)?;
+        Ok(result)
+    }
+
+    /// Takes the runner lock, or fails with [`StoreError::RunnerBusy`] if
+    /// another runner holds it. Released when dropped (or when the process
+    /// ends, even if it is killed).
+    pub fn lock_runner(&self) -> Result<RunnerLock, StoreError> {
+        Ok(RunnerLock {
+            _file: self.lock(RUNNER_LOCK_NAME, false)?,
+        })
+    }
+
+    /// Opens (creating if needed) the lock file `name` and locks it,
+    /// waiting for it if `wait`. Never through a link (AGENTS.md §10.1):
+    /// an existing file is opened with `open_regular_nofollow`, a missing
+    /// one created with `create_new`.
+    fn lock(&self, name: &str, wait: bool) -> Result<File, StoreError> {
+        std::fs::create_dir_all(&self.dir)?;
+        let path = self.dir.join(name);
+        let file = loop {
+            match tdm_platform::fs::open_regular_nofollow(&path, true) {
+                Ok(file) => break file,
+                Err(err) if tdm_platform::fs::is_not_regular_file(&err) => {
+                    return Err(StoreError::NotRegularFile(path));
+                }
+                Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+                Err(err) => return Err(err.into()),
+            }
+            match OpenOptions::new().write(true).create_new(true).open(&path) {
+                Ok(file) => break file,
+                // Another process created it first: open that one.
+                Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(err) => return Err(err.into()),
+            }
+        };
+        if wait {
+            file.lock()?;
+        } else {
+            match file.try_lock() {
+                Ok(()) => {}
+                Err(TryLockError::WouldBlock) => return Err(StoreError::RunnerBusy),
+                Err(TryLockError::Error(err)) => return Err(err.into()),
+            }
+        }
+        Ok(file)
+    }
+}
+
+/// `url` as it may be shown: without a user name, password, query or
+/// fragment, which may hold secrets (AGENTS.md §10.3).
+pub fn shown_url(url: &str) -> String {
+    match reqwest::Url::parse(url) {
+        Ok(mut url) => {
+            let _ = url.set_username("");
+            let _ = url.set_password(None);
+            url.set_query(None);
+            url.set_fragment(None);
+            url.to_string()
+        }
+        Err(_) => "(invalid URL)".to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn queue_names_are_plain() {
+        for good in ["main", "ليلي", "night_2", "a-b", "طابور ليلي", "a b c"] {
+            check_name(good).unwrap();
+        }
+        let long = "a".repeat(MAX_NAME_CHARS + 1);
+        for bad in [
+            "",
+            " a",
+            "a ",
+            "a  b",
+            "a\tb",
+            "a/b",
+            "..",
+            "a\u{202e}b",
+            "a\nb",
+            long.as_str(),
+        ] {
+            assert!(check_name(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn shown_urls_hold_no_secrets() {
+        assert_eq!(
+            shown_url("https://u:p@h/f.bin?sig=SECRET#x"),
+            "https://h/f.bin"
+        );
+        assert_eq!(shown_url("not a url"), "(invalid URL)");
+    }
+
+    #[test]
+    fn ids_are_never_reused() {
+        let mut queues = QueuesFile::empty();
+        let dir = std::env::temp_dir();
+        let a = queues.add("main", "http://h/a", &dir).unwrap();
+        queues.remove(a).unwrap();
+        let b = queues.add("main", "http://h/b", &dir).unwrap();
+        assert!(b > a);
+        assert!(matches!(
+            queues.add("main", "http://u:p@h/c", &dir),
+            Err(StoreError::Credentials)
+        ));
+        assert!(queues.add("main", "ftp://h/c", &dir).is_err());
+    }
+}

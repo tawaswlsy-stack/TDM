@@ -1,0 +1,248 @@
+{
+  "extensionName": {
+    "message": "TDM"
+  },
+  "extensionDescription": {
+    "message": "Sends your downloads to the TDM download manager, to download them faster and resume them when they stop."
+  },
+  "menuDownloadLink": {
+    "message": "Download with TDM"
+  },
+  "notRefused": {
+    "message": "TDM did not take this download, so the browser went on with it."
+  },
+  "notAnswered": {
+    "message": "TDM did not answer in time. The download is paused in the browser, since TDM may have it: look in TDM before you resume it here."
+  },
+  "notReachable": {
+    "message": "The browser cannot reach TDM, so it went on with the download. Install TDM, or open its settings and choose “Fix the browser integration”."
+  },
+  "optionsTitle": {
+    "message": "TDM settings"
+  },
+  "optionsCapture": {
+    "message": "Send downloads to TDM"
+  },
+  "optionsAllDownloads": {
+    "message": "Capture every HTTP/HTTPS browser download"
+  },
+  "optionsAllDownloadsHint": {
+    "message": "Send every file download started by the browser to TDM, regardless of type or size. Exclude sites or turn capture off here."
+  },
+  "optionsExtensions": {
+    "message": "File types"
+  },
+  "optionsExtensionsHint": {
+    "message": "Extensions without the dot, separated by spaces."
+  },
+  "optionsBigFiles": {
+    "message": "Also take any file larger than"
+  },
+  "optionsBigFilesUnit": {
+    "message": "MB"
+  },
+  "optionsBigFilesHint": {
+    "message": "Whatever its type, when the browser knows its size. Excluded sites stay in the browser."
+  },
+  "optionsSites": {
+    "message": "Excluded sites"
+  },
+  "optionsSitesHint": {
+    "message": "Downloads from these sites (and their subdomains) stay in the browser. One site per line."
+  },
+  "optionsSave": {
+    "message": "Save"
+  },
+  "optionsReset": {
+    "message": "Original settings"
+  },
+  "optionsSaved": {
+    "message": "Saved."
+  },
+  "lang": {
+    "message": "en"
+  },
+  "notAnsweredRunning": {
+    "message": "TDM did not answer in time and may have taken the download, while the browser goes on with it too: look in TDM, and cancel one of them if it is there twice."
+  },
+  "menuRefused": {
+    "message": "TDM did not take this link."
+  },
+  "menuNotAnswered": {
+    "message": "TDM did not answer in time, and may have taken the link: look in TDM."
+  },
+  "menuNotReachable": {
+    "message": "The browser cannot reach TDM. Install TDM, or open its settings and choose “Fix the browser integration”."
+  },
+  "menuNotALink": {
+    "message": "This is not a link to a file TDM can download."
+  },
+  "takenAlsoInBrowser": {
+    "message": "TDM took the download, but the browser had finished it too: the file is there twice, so remove one if you like."
+  },
+  "welcomeTitle": {
+    "message": "Welcome to TDM"
+  },
+  "welcomeIntro": {
+    "message": "Downloads of the file types you choose in the settings now go to the TDM download manager, to download them faster and resume them when they stop. And in the right-click menu on any link: “Download with TDM”, and on any video: “Download video with TDM”."
+  },
+  "cookiesTitle": {
+    "message": "TDM on sites: cookies and video (optional)"
+  },
+  "cookiesWhy": {
+    "message": "One permission for two things. Cookies: some sites give their files only to signed-in users, and for TDM to download those the extension reads the download link's cookies. Video: a “Download video” button over a page's videos, and noting the addresses of the video playlists (HLS and DASH) the page loads."
+  },
+  "cookiesOnlyHere": {
+    "message": "The cookies go to the TDM program on this computer, and from it to their own site only, nowhere else."
+  },
+  "cookiesOnlyThisSite": {
+    "message": "For each download: only its link's site cookies, for its link only, and only when it goes to TDM. For a video, its page's cookies, when you press or when the video button shows over it. No cookies from a private window."
+  },
+  "cookiesNotKept": {
+    "message": "TDM does not write them to disk: they stay in memory until the download finishes or is removed. Except for a video: yt-dlp reads them from a temporary file in TDM's data folder, deleted when it ends."
+  },
+  "cookiesOptional": {
+    "message": "Without the permission the extension works as it is: files of sites that need a sign-in stay in the browser, and for videos there is “Download video with TDM” in the right-click menu. You can take the permission back at any time in the settings."
+  },
+  "cookiesAllow": {
+    "message": "Allow TDM on sites"
+  },
+  "cookiesDrop": {
+    "message": "Take the permission back"
+  },
+  "cookiesAllowed": {
+    "message": "Allowed: a download link's cookies go to TDM with its download, and the “Download video” button shows over videos."
+  },
+  "cookiesNotAllowed": {
+    "message": "Not allowed: downloads go to TDM without cookies, and videos have the right-click menu only."
+  },
+  "signInNeedsCookies": {
+    "message": "This site needs a sign-in, so the browser went on with the download. For TDM to take downloads like this, choose “Allow TDM on sites”."
+  },
+  "signInEvenWithCookies": {
+    "message": "This site refused TDM even with the cookies, so the browser went on with the download."
+  },
+  "menuSignInNeedsCookies": {
+    "message": "This site needs a sign-in. Choose “Allow TDM on sites” for TDM to download it, or download it with the browser."
+  },
+  "menuSignInEvenWithCookies": {
+    "message": "This site refused TDM even with the cookies. Download it with the browser."
+  },
+  "downloadWithBrowser": {
+    "message": "Download with the browser"
+  },
+  "cookiesPrompt": {
+    "message": "The browser will say the extension asks to “Read and change all your data on all websites” or to “Access your data for all websites”: that is what it calls this permission, as each site's cookies and videos need that site's permission. The extension reads only the download link's cookies, where the videos are and their addresses, their playlists' addresses, and the address of a link you click with TDM's keys; never the pages' text or what you type in them."
+  },
+  "signInNoCookies": {
+    "message": "This site needs a sign-in, and no cookies went (the browser gave none for this link), so the browser went on with the download."
+  },
+  "menuSignInNoCookies": {
+    "message": "This site needs a sign-in, and no cookies went (the browser gave none for this link). Download it with the browser."
+  },
+  "menuDownloadVideo": {
+    "message": "Download video with TDM"
+  },
+  "videoRefused": {
+    "message": "TDM did not take this video."
+  },
+  "videoNotAnswered": {
+    "message": "TDM did not answer in time, and may have taken the video: look in TDM."
+  },
+  "videoNotWeb": {
+    "message": "TDM cannot read this page: it is not an http or https page."
+  },
+  "sitesVideo": {
+    "message": "Video: TDM's floating button appears automatically when a suitable video starts playing. Detection stays local and sends no video address or cookies before you interact: hovering over the button lets TDM read the page ahead for format choices (at most once every ten minutes); pressing it sends the page to start the download. HLS and DASH playlist addresses stay in the tab's memory and are forgotten when it closes or opens another page. The extension never stops or changes site requests, and does not handle DRM video."
+  },
+  "videoButton": {
+    "message": "Download video"
+  },
+  "videoButtonWorking": {
+    "message": "Sending to TDM…"
+  },
+  "videoButtonDone": {
+    "message": "Sent to TDM"
+  },
+  "videoButtonFailed": {
+    "message": "The video did not reach TDM."
+  },
+  "playlistButton": {
+    "message": "Download the playlist with TDM"
+  },
+  "videoButtonThis": {
+    "message": "This video"
+  },
+  "videoButtonWholeList": {
+    "message": "The whole playlist"
+  },
+  "videoListVideo": {
+    "message": "Video"
+  },
+  "videoListPlaying": {
+    "message": "Playing videos"
+  },
+  "videoListAudio": {
+    "message": "Audio only"
+  },
+  "videoListSound": {
+    "message": "Sound"
+  },
+  "videoListOriginal": {
+    "message": "Original"
+  },
+  "videoListMore": {
+    "message": "More qualities in TDM…"
+  },
+  "videoButtonHelp": {
+    "message": "TDM: pick a quality and the download starts at once"
+  },
+  "videoButtonHide": {
+    "message": "Hide the button for this video"
+  },
+  "playlistNotHere": {
+    "message": "TDM found no playlist on this page."
+  },
+  "hostNotRunning": {
+    "message": "TDM is not running. Start it, then try again."
+  },
+  "hostNotFound": {
+    "message": "TDM was not found where it should be. Install it again, or open its settings and choose “Fix the browser integration”."
+  },
+  "hostUnreachable": {
+    "message": "TDM could not be reached. Restart it, then try again."
+  },
+  "hostNoAnswer": {
+    "message": "TDM did not answer in time, and may have it: look in TDM."
+  },
+  "sitesPartly": {
+    "message": "Partly allowed: a download link's cookies go to TDM with its download, but the “Download video” button needs the rest of the permission. You can also take it all back."
+  },
+  "keysTitle": {
+    "message": "Keys with a click on a link"
+  },
+  "keysSend": {
+    "message": "Sends the link to TDM"
+  },
+  "keysBrowser": {
+    "message": "Leaves it to the browser (TDM does not take its download)"
+  },
+  "keysHint": {
+    "message": "These work only after “Allow TDM on sites” (below), as the extension must see the click in the page, and in open tabs once reloaded. The extension reads nothing of the page but the clicked link's address. Strict cookies (SameSite=Strict) never go with a link from another site's page, as in the browser."
+  },
+  "keysOff": {
+    "message": "Nothing"
+  },
+  "keysClick": {
+    "message": "click"
+  },
+  "sitesKeys": {
+    "message": "Keys with a click (in the settings): of a link clicked with TDM's or the browser's keys, the extension learns only its address. Any other click stays the page's own."
+  },
+  "keysUse": {
+    "message": "Use keys to force TDM or keep it out"
+  },
+  "keysWarning": {
+    "message": "Off by default. Once on, Ctrl+click no longer opens a link in a new tab (on Windows and Linux): it sends it to TDM, and a link that is a web page opens in a tab behind this one."
+  }
+}

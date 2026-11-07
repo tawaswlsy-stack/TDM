@@ -1,0 +1,87 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "1.0.1"
+edition = "2024"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/tawaswlsy-stack/TDM"
+publish = false
+
+# Shared dependency versions. Every entry is listed with its license and
+# reason in docs/DEPENDENCIES.md.
+[workspace.dependencies]
+bytes = "1.12.1"
+clap = { version = "4.6.7", features = ["derive"] }
+# The system clipboard on macOS and Linux, for clipboard monitoring (M5):
+# NSPasteboard, X11 or Wayland (data-control). No image support.
+arboard = { version = "3.7.0", default-features = false, features = ["wayland-data-control"] }
+# macOS: the pasteboard's change count, so it is read only after a copy
+# (clipboard monitoring, M5). Already under arboard.
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSPasteboard"] }
+dirs = "7.0.0"
+getrandom = "0.4.3"
+# Reading the links of an HTML page for the site grabber (M7, ADR-0010):
+# the tokenizer only, no tree.
+html5ever = "0.40.1"
+http-body-util = { version = "0.1.5", features = ["channel"] }
+hyper = { version = "1.12.0", features = ["http1", "server"] }
+hyper-util = { version = "0.1.21", features = ["tokio"] }
+percent-encoding = "2.3.2"
+# Test certificates only. `ring`, never `aws-lc-rs` (its license includes the
+# GPL-incompatible OpenSSL license).
+rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "ring"] }
+# HTTP client. No default features: rustls without a built-in provider (we
+# install `ring`), no system proxy (proxies arrive in M3), no decompression.
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider"] }
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+landlock = "0.4.7"
+libc = "0.2.191"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha2 = "0.11.1"
+# The signed list of the video tools (ADR-0011, section 2): minisign
+# signatures by the project's update keys, as Tauri's signer writes them
+# (base64 of minisign's text).
+minisign-verify = "0.3.0"
+base64 = "0.23.1"
+# The official zip (onedir) builds of yt-dlp for macOS and Windows (owner's
+# decision, 2026-10-27: a one-file build unpacks itself at every start).
+# Reading only, and only stored or deflated entries, through flate2's Rust
+# backend (miniz_oxide): no AES, bzip2, zstd or the rest of zip's defaults.
+zip = { version = "9.1.2", default-features = false, features = ["deflate-flate2"] }
+flate2 = { version = "1.1.10", default-features = false, features = ["rust_backend"] }
+dunce = "1.0.5"
+icu_properties = "2.4.0"
+# Local time and time zones for schedules (M3). Default features: the
+# system time zone on every OS, and a bundled tz database on Windows.
+jiff = "0.2.38"
+thiserror = "2.0.21"
+tokio = { version = "1.54.1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_DataExchange", "Win32_System_Diagnostics_ToolHelp", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_JobObjects", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Ole", "Win32_System_Pipes", "Win32_System_Power", "Win32_System_Registry", "Win32_System_Shutdown", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+tempfile = "3.27.0"
+# Translations (M4, ADR-0003): Fluent. The plural forms (the six Arabic
+# ones) come from icu_plurals through PLURAL(), not from the rules inside
+# fluent-bundle (see below).
+fluent-bundle = "0.16.0"
+fluent-syntax = "0.12.0"
+unic-langid = "0.9.6"
+# CLDR plural categories for PLURAL() in the translations: the plural rules
+# fluent-bundle uses (intl_pluralrules 7.0.2) put Arabic 103 and 111 in
+# "other" (they test the number, not the number mod 100).
+icu_plurals = "2.4.0"
+icu_locale_core = "2.4.0"
+
+# Workspace crates
+tdm-core = { path = "crates/tdm-core" }
+tdm-grab = { path = "crates/tdm-grab" }
+tdm-i18n = { path = "crates/tdm-i18n" }
+tdm-platform = { path = "crates/tdm-platform" }
+tdm-testserver = { path = "crates/tdm-testserver" }
+
+# Hashing 50 MB test files in unoptimized builds is slow; optimize just the
+# hash crate in dev and test builds.
+[profile.dev.package.sha2]
+opt-level = 3

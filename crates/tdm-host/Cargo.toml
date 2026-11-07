@@ -1,0 +1,23 @@
+[package]
+name = "tdm-host"
+description = "The Native Messaging host: hands the browser extension's requests to the running TDM (ADR-0005)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "tdm-host"
+path = "src/main.rs"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tdm-core.workspace = true
+tdm-platform.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tdm-platform = { workspace = true, features = ["test-support"] }

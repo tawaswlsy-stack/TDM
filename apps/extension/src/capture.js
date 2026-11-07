@@ -1,0 +1,337 @@
+// @ts-check
+// Which downloads go to TDM, the message `tdm-host` accepts, and handing a
+// download over without losing it (ADR-0005).
+
+/** The Native Messaging host's name (`tdm_platform::ids::NATIVE_HOST_NAME`). */
+export const HOST = "io.github.tawaswlsy_stack.tdm.host";
+/** `tdm_host::PROTOCOL_VERSION`. */
+export const PROTOCOL_VERSION = 1;
+/** The longest URL the host accepts (`tdm_host::MAX_URL`). */
+export const MAX_URL = 8 * 1024;
+/** The longest file name the host accepts, in UTF-8 bytes (`MAX_NAME`). */
+export const MAX_NAME = 255;
+/** How the host says the request reached TDM but no answer came back (too
+ * late, or broken): TDM may have the download, so it is neither taken nor
+ * refused (review of #62, #64, #70). */
+export const NO_ANSWER = ["TDM did not answer", "TDM's answer is not valid"];
+
+/** Control characters, C0 and C1, and the direction marks `tdm-host`
+ * refuses in a URL (`queue::check_url`). */
+// eslint-disable-next-line no-control-regex
+const UNSAFE = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/;
+
+/** A link the host would accept: http or https, no user name or password,
+ * no control or direction characters, 8 KiB at most.
+ * @param {string | undefined} url */
+export function isWeb(url) {
+  if (!url || url.length > MAX_URL || UNSAFE.test(url)) return false;
+  try {
+    const { protocol, username, password } = new URL(url);
+    return (protocol === "http:" || protocol === "https:") && !username && !password;
+  } catch {
+    return false;
+  }
+}
+
+/** The last part of a path, with `/` or `\` (Windows) between folders.
+ * @param {string} path */
+function baseName(path) {
+  return path.split(/[\\/]/).pop() ?? "";
+}
+
+/** The file's extension, lower case: from the name the browser gave, else
+ * from the URL's path.
+ * @param {{ filename?: string, url?: string, finalUrl?: string }} item */
+export function extensionOf(item) {
+  let name = item.filename ? baseName(item.filename) : "";
+  if (!name) {
+    try {
+      name = decodeURIComponent(baseName(new URL(item.finalUrl || item.url || "").pathname));
+    } catch {
+      name = "";
+    }
+  }
+  const dot = name.lastIndexOf(".");
+  return dot > 0 ? name.slice(dot + 1).toLowerCase() : "";
+}
+
+/** Whether `host` is `site` or one of its subdomains.
+ * @param {string} host @param {string} site */
+function onSite(host, site) {
+  return host === site || host.endsWith(`.${site}`);
+}
+
+/** The download's size in bytes, when the browser knows it (Chrome and
+ * Firefox say 0 or -1 when they do not).
+ * @param {{ totalBytes?: number, fileSize?: number }} item */
+export function sizeOf(item) {
+  for (const size of [item.totalBytes, item.fileSize]) {
+    if (typeof size === "number" && Number.isFinite(size) && size > 0) return size;
+  }
+  return null;
+}
+
+/**
+ * Whether a new browser download goes to TDM: capture is on, it is not a
+ * private window's, it is an http(s) download the host would accept, of a
+ * all downloads are enabled, or it is a listed type or (when that is on)
+ * larger than the size set, and neither
+ * its first URL, its final URL (after redirects) nor the page it came from
+ * is on an excluded site.
+ *
+ * @param {any} item a `downloads.DownloadItem`
+ * @param {import("./settings.js").Settings} settings
+ * @param {string} [ownId] this extension's id: its own downloads stay
+ */
+export function shouldCapture(item, settings, ownId) {
+  if (!settings.capture) return false;
+  if (item.incognito) return false;
+  if (item.state && item.state !== "in_progress") return false;
+  if (ownId && item.byExtensionId === ownId) return false;
+  const url = item.finalUrl || item.url;
+  if (!isWeb(url)) return false;
+  const size = sizeOf(item);
+  const big = settings.bigFiles && size !== null && size > settings.bigFileMb * 1024 * 1024;
+  if (!settings.allDownloads && !big && !settings.extensions.includes(extensionOf(item))) return false;
+  for (const page of [item.url, item.finalUrl, item.referrer]) {
+    if (!page) continue;
+    let host;
+    try {
+      host = new URL(page).hostname;
+    } catch {
+      continue;
+    }
+    if (settings.excludedSites.some((site) => onSite(host, site))) return false;
+  }
+  return true;
+}
+
+/**
+ * The `download` message for `tdm-host`: the URL, and the page and the
+ * browser's file name when the host would accept them (a referrer that is
+ * an http(s) URL; a plain name, no path, no control characters, 255 bytes at
+ * most), and the link's `Cookie` header when the user allowed it
+ * (`cookies.cookieHeader`, already checked as the host checks it). And
+ * this extension's instance id and the cookie store (a Firefox container),
+ * so TDM can ask it for the cookies again after a restart (M5).
+ *
+ * @param {string} url
+ * @param {{ referrer?: string, filename?: string, cookies?: string | null, instance?: string, store?: string, ticket?: string }} [extra]
+ */
+export function downloadMessage(url, extra = {}) {
+  /** @type {Record<string, unknown>} */
+  const message = { type: "download", protocol_version: PROTOCOL_VERSION, url };
+  if (extra.referrer && isWeb(extra.referrer)) message.referrer = extra.referrer;
+  const name = extra.filename ? baseName(extra.filename) : "";
+  // eslint-disable-next-line no-control-regex
+  const plain = name && !/[\u0000-\u001f\u007f-\u009f]/.test(name) && name !== "." && name !== "..";
+  if (plain && new TextEncoder().encode(name).length <= MAX_NAME) message.filename = name;
+  if (extra.cookies) message.cookies = extra.cookies;
+  const id = /^[A-Za-z0-9_-]{1,64}$/;
+  if (extra.instance && id.test(extra.instance)) message.instance = extra.instance;
+  if (extra.store && id.test(extra.store) && extra.store !== "firefox-private") message.store = extra.store;
+  if (extra.ticket && id.test(extra.ticket)) message.ticket = extra.ticket;
+  return message;
+}
+
+/**
+ * The message for "Download with TDM" on a link, or null when the link is
+ * not one TDM can download (`javascript:`, `data:`, a password in it…).
+ *
+ * @param {{ linkUrl?: string, pageUrl?: string }} info
+ * @param {string | null} [cookies] the link's `Cookie` header, if allowed
+ * @param {{ instance?: string, store?: string, ticket?: string }} [from] where it comes from
+ */
+export function menuMessage(info, cookies = null, from = {}) {
+  return isWeb(info.linkUrl)
+    ? downloadMessage(/** @type {string} */ (info.linkUrl), { referrer: info.pageUrl, cookies, ...from })
+    : null;
+}
+
+/**
+ * The message for "Download video with TDM" on a video or audio element
+ * (M6, ADR-0009), or null when its page is not one TDM can read. The
+ * page goes to yt-dlp: that of the frame the video is in when it is in
+ * one (an embedded player), else the tab's. The video's own address goes
+ * too when it is http(s), for a page yt-dlp does not know; a `blob:` or
+ * `data:` one, which only the page can read, does not.
+ *
+ * Without an address of its own, the playlist the tab loaded for it goes
+ * instead (`streams.js`), when there is one.
+ *
+ * A video in a post of a feed (X's timeline, a profile) goes as that post's
+ * own page (`postUrl`, checked by the background to be of the same site):
+ * yt-dlp reads a post, not a feed (owner's report, 2026-10-29).
+ *
+ * @param {{ pageUrl?: string, frameUrl?: string, srcUrl?: string, postUrl?: string }} info
+ * @param {{ cookies?: string | null, private?: boolean, stream?: string }} [extra]
+ *   the page's `Cookie` header, if allowed; whether it is a private
+ *   window's; the playlist noted for it
+ */
+export function videoMessage(info, extra = {}) {
+  const page = isWeb(info.postUrl) ? info.postUrl : isWeb(info.frameUrl) ? info.frameUrl : info.pageUrl;
+  if (!isWeb(page)) return null;
+  /** @type {Record<string, unknown>} */
+  const message = { type: "video", protocol_version: PROTOCOL_VERSION, page };
+  if (isWeb(info.srcUrl)) message.media = info.srcUrl;
+  else if (!extra.private && isWeb(extra.stream)) message.media = extra.stream;
+  // A private window's cookies never go (as for a link).
+  if (extra.private) message.private = true;
+  else if (extra.cookies) message.cookies = extra.cookies;
+  return message;
+}
+
+/**
+ * The post a video's button sent (`postUrl`), if it is a web page of the
+ * same site as the page it was found in; else undefined: a page's script
+ * never sends TDM elsewhere.
+ * @param {unknown} post @param {string | undefined} page @returns {string | undefined}
+ */
+export function samePost(post, page) {
+  if (typeof post !== "string" || post.length > 8192 || !isWeb(post) || !isWeb(page)) return undefined;
+  try {
+    return new URL(post).origin === new URL(/** @type {string} */ (page)).origin ? post : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** YouTube's own sites, where a playlist has a page of its own. */
+const YOUTUBE_SITE = /^(www\.|m\.)?youtube\.com$/;
+
+/** A playlist's id as YouTube makes them (letters, digits, `-` and `_`),
+ * of a list that has a page of its own. Not a Mix (`RD…`), which YouTube
+ * makes up as you watch, nor a passing list (`TL…`, the queue); but YouTube
+ * Music's lists (`RDCLAK5uy_…`) have a page. As in video-button.js (a test
+ * checks they are the same). */
+const LIST_ID = /^(?!RD(?!CLAK5uy_)|TL)[\w-]{2,200}$/;
+
+/**
+ * The page of the playlist `url` is about, for "Download the playlist with
+ * TDM" and the button's "The whole playlist": `url` is a YouTube
+ * playlist's page (`/playlist?list=…`) or a video played from one
+ * (`/watch?v=…&list=…`), and the page is `https://<the same site>/playlist?list=…`,
+ * which TDM's «Video quality» opens as a playlist. Else null.
+ * @param {string | undefined} url
+ */
+export function playlistPage(url) {
+  if (!isWeb(url)) return null;
+  const { protocol, hostname, pathname, searchParams } = new URL(/** @type {string} */ (url));
+  const list = searchParams.get("list") ?? "";
+  if (protocol !== "https:" || !YOUTUBE_SITE.test(hostname) || !["/playlist", "/watch"].includes(pathname) || !LIST_ID.test(list)) return null;
+  return `https://${hostname}/playlist?list=${list}`;
+}
+
+/** Whether TDM refused because the link is a web page, not a file
+ * (the desktop app's `not_the_file`; a test reads its text there).
+ * @param {Result | null} result */
+export function isPageRefusal(result) {
+  return result?.outcome === "refused" && /the server sent a web page\b/.test(result.error ?? "");
+}
+
+/** Whether TDM refused because the site wants a sign-in: the server
+ * answered 401 or 403 to TDM (`tdm_core::Error::Status`).
+ * @param {Result | null} result */
+export function needsSignIn(result) {
+  return result?.outcome === "refused" && /the server answered 40[13]\b/.test(result.error ?? "");
+}
+
+/**
+ * What became of a request: `taken` (TDM has it, and reached the file),
+ * `refused` (it has not), `unknown` (it may have it: no answer came back),
+ * or `unreachable` (no host: TDM is not installed, or the browser
+ * integration needs fixing).
+ *
+ * `alsoInBrowser`: taken, but the browser had finished it meanwhile
+ * (Firefox, a small file): it is kept in the browser's list too.
+ *
+ * `code`: when tdm-host itself could not hand it to TDM, why
+ * (`HOST_PROBLEMS`), to be said in TDM's language (#264).
+ *
+ * @typedef {{ outcome: "taken" | "refused" | "unknown" | "unreachable", error?: string, code?: string, alsoInBrowser?: boolean }} Result
+ */
+
+/** tdm-host's own failures (`tdm_host::HostProblem`), each with the
+ * text that says it: TDM is not running, its program was not found, it
+ * cannot be reached, or it did not answer (and may have it). */
+export const HOST_PROBLEMS = {
+  not_running: "hostNotRunning",
+  not_found: "hostNotFound",
+  unreachable: "hostUnreachable",
+  no_answer: "hostNoAnswer",
+};
+
+/**
+ * Sends `message` to TDM through the host.
+ * @param {any} browserApi
+ * @param {Record<string, unknown>} message
+ * @returns {Promise<Result>}
+ */
+export async function send(browserApi, message) {
+  let answer;
+  try {
+    answer = await browserApi.runtime.sendNativeMessage(HOST, message);
+  } catch (err) {
+    return { outcome: "unreachable", error: String(err) };
+  }
+  if (answer && answer.ok === true) return { outcome: "taken" };
+  const error = typeof answer?.error === "string" ? answer.error : "no answer";
+  const code = typeof answer?.code === "string" && Object.hasOwn(HOST_PROBLEMS, answer.code) ? answer.code : undefined;
+  // A host of before the codes says "no answer" in its text only.
+  const unknown = code ? code === "no_answer" : NO_ANSWER.some((start) => error.startsWith(start));
+  return code ? { outcome: unknown ? "unknown" : "refused", error, code } : { outcome: unknown ? "unknown" : "refused", error };
+}
+
+/**
+ * Hands a browser download to TDM without losing it.
+ *
+ * - Where pausing keeps what was downloaded (Chrome and Edge), the browser's
+ *   download is paused first. Taken by TDM, it is cancelled and removed
+ *   from the browser's list; refused or unreachable, it goes on in the
+ *   browser; with no answer, it stays paused, since TDM may have it.
+ * - In Firefox, pausing a download that has no data yet cancels it for good
+ *   (review of #70), so it is not paused: it goes on in the browser while
+ *   TDM is asked, and is cancelled only once TDM has taken it.
+ *
+ * @param {any} browserApi
+ * @param {any} item
+ * @param {{ pause: boolean, cookies?: string | null, instance?: string, ticket?: string }} how
+ *   `pause`: the browser keeps a paused download's data
+ *   (`compat.pausesSafely`); `cookies`: the link's `Cookie` header, if the
+ *   user allowed it; `instance`: this extension's id (`link.instanceId`)
+ * @returns {Promise<Result | null>} null when the browser had already
+ *   finished (nothing was sent)
+ */
+export async function takeOver(browserApi, item, how) {
+  if (how.pause) {
+    try {
+      await browserApi.downloads.pause(item.id);
+    } catch {
+      return null;
+    }
+  }
+  const result = await send(
+    browserApi,
+    downloadMessage(item.finalUrl || item.url, {
+      referrer: item.referrer,
+      filename: item.filename,
+      cookies: how.cookies,
+      instance: how.instance,
+      store: item.cookieStoreId,
+      ticket: how.ticket,
+    }),
+  );
+  if (result.outcome === "taken") {
+    // Not paused (Firefox), the browser may have finished it meanwhile:
+    // then its file stays, and so does its line in the list (review of #70).
+    if (!how.pause) {
+      const [now] = await browserApi.downloads.search({ id: item.id }).catch(() => []);
+      if (now?.state === "complete") return { ...result, alsoInBrowser: true };
+    }
+    await browserApi.downloads.cancel(item.id).catch(() => {});
+    await browserApi.downloads.erase({ id: item.id }).catch(() => {});
+  } else if (how.pause && result.outcome !== "unknown") {
+    await browserApi.downloads.resume(item.id).catch(() => {});
+  }
+  return result;
+}

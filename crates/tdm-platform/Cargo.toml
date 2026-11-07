@@ -1,0 +1,43 @@
+[package]
+name = "tdm-platform"
+description = "TDM platform layer: one interface, one implementation per OS (ADR-0006)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+dirs.workspace = true
+getrandom.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+# The clipboard on macOS and Linux; Windows uses the Win32 clipboard.
+arboard.workspace = true
+libc.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Confines the JavaScript runtime that YouTube's pages need (ADR-0009).
+landlock.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
+
+[features]
+# For tests only: `origin::quarantine_this_process`. No shipped binary
+# enables it.
+test-support = []
+
+[dev-dependencies]
+tempfile.workspace = true
+
+# The sandbox test runs itself as the confined program: one thread, no
+# libtest (tests/sandbox.rs).
+[[test]]
+name = "sandbox"
+harness = false

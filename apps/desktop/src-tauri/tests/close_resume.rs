@@ -1,0 +1,691 @@
+//! Closing the app while a download runs, then opening it again: the
+//! download goes on from the progress its state file recorded, and the
+//! file comes out whole (owner's request on #45). Two ways of closing:
+//! asking the app to close (SIGTERM on Linux and macOS, a window close on
+//! Windows, with `--close-quits`), and killing it, as if its 5 s had run
+//! out or it had crashed. And on Windows, closing the window without
+//! `--close-quits`: TDM goes on in the tray, downloading (#109).
+//!
+//! These need the app built by `tauri build`, so `cargo test` lists them as
+//! ignored; CI copies the built app aside (as `cargo test` rebuilds the
+//! binary without its page) and runs them:
+//! `TDM_DESKTOP_APP=<copy> cargo test --test close_resume -- --ignored`
+//! (under Xvfb on Linux).
+
+use std::io::Read;
+#[cfg(windows)]
+use std::io::{BufRead, BufReader, Write};
+use std::path::Path;
+use std::process::{Child, Command, ExitStatus, Stdio};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use tdm_core::queue::{Item, QueueStore, Status};
+use tdm_core::state::DownloadState;
+use tdm_testserver::{FileSpec, TestServer, random_bytes, sha256_hex};
+
+const MIB: u64 = 1024 * 1024;
+/// 24 MiB, each connection slowed to 256 KiB/s: about 12 s with 8
+/// connections, so the app can be closed in the middle.
+const SIZE: u64 = 24 * MIB;
+
+/// The running app, and everything it has written to stderr so far, with
+/// when each piece came (its length so far, and the time).
+struct App {
+    child: Child,
+    stderr: Arc<Mutex<String>>,
+    #[cfg_attr(not(windows), allow(dead_code))]
+    heard: Arc<Mutex<Vec<(usize, Instant)>>>,
+}
+
+impl App {
+    fn said(&self, line: &str) -> bool {
+        self.stderr.lock().unwrap().contains(line)
+    }
+
+    /// How many times the app said `line`.
+    #[cfg(not(target_os = "linux"))]
+    fn said_times(&self, line: &str) -> usize {
+        self.stderr.lock().unwrap().matches(line).count()
+    }
+
+    /// When the app said `line` (first), if it did.
+    #[cfg(windows)]
+    fn said_at(&self, line: &str) -> Option<Instant> {
+        let end = self.stderr.lock().unwrap().find(line)? + line.len();
+        let heard = self.heard.lock().unwrap();
+        heard.iter().find(|(len, _)| *len >= end).map(|(_, at)| *at)
+    }
+}
+
+/// The app never outlives the test, even when the test fails first: killed
+/// and waited for (as the CLI tests' `common::Running`, #50). An app that
+/// already exited: the kill fails harmlessly and the wait returns at once.
+impl Drop for App {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// The app built by `tauri build`, as CI copies it aside: `cargo test`
+/// itself rebuilds the binary without its page (review of #45).
+fn start(data: &Path) -> App {
+    start_with(data, true)
+}
+
+/// `close_quits`: closing the window quits (`--close-quits`, as TDM's
+/// own setting «Closing the window quits TDM» but with no question):
+/// the tests ask TDM to quit by closing its window on Windows. Without
+/// it, closing hides TDM into the tray and the downloads go on (#109).
+fn start_with(data: &Path, close_quits: bool) -> App {
+    start_with_env(data, close_quits, &[])
+}
+
+/// [`start_with`], with these variables in the app's environment.
+fn start_with_env(data: &Path, close_quits: bool, env: &[(&str, &str)]) -> App {
+    let app = std::env::var_os("TDM_DESKTOP_APP")
+        .expect("TDM_DESKTOP_APP must name the built tdm-desktop");
+    let mut command = Command::new(app);
+    command.arg("--data-dir").arg(data);
+    command.envs(env.iter().copied());
+    if close_quits {
+        command.arg("--close-quits");
+    }
+    let mut child = command
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the app starts");
+    let stderr = Arc::new(Mutex::new(String::new()));
+    let heard = Arc::new(Mutex::new(Vec::new()));
+    let (mut pipe, sink, times) = (child.stderr.take().unwrap(), stderr.clone(), heard.clone());
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 4096];
+        while let Ok(n) = pipe.read(&mut buf) {
+            if n == 0 {
+                break;
+            }
+            let text = String::from_utf8_lossy(&buf[..n]);
+            eprint!("{text}");
+            let mut all = sink.lock().unwrap();
+            all.push_str(&text);
+            times.lock().unwrap().push((all.len(), Instant::now()));
+        }
+    });
+    let app = App {
+        child,
+        stderr,
+        heard,
+    };
+    // The page has loaded: a build without its page would otherwise pass
+    // (review of #45).
+    wait_until("the window is ready", Duration::from_secs(60), || {
+        app.said("tdm: the window is ready")
+    });
+    app
+}
+
+/// Asks the app to close and checks that it stopped its downloads and
+/// exited cleanly, sooner than its own 5 s limit: a close that only waited
+/// the limit out would pass otherwise (review of #45).
+fn close_cleanly(app: &mut App, how: Close, store: &QueueStore) {
+    let asked = ask_to_close(&app.child, how);
+    let status = wait_exit(&mut app.child, Duration::from_secs(30));
+    #[cfg(windows)]
+    let exited = Instant::now();
+    let took = asked.elapsed();
+    // Let the reader thread take the last lines.
+    std::thread::sleep(Duration::from_millis(200));
+    // Said every time, so the CI log shows how near the 5 s limit a close
+    // usually is (#132).
+    println!("closing took {took:?}");
+    let stopped = app.said("tdm: the downloads stopped; exiting");
+    // Windows session end: how much of it was TDM's own, said before the
+    // check of the whole (#244: the seconds came before its hook).
+    #[cfg(windows)]
+    if matches!(how, Close::SessionEnd)
+        && let Some(hook) = app.said_at("asked to stop (the Windows session is ending)")
+    {
+        println!(
+            "before TDM's hook: {:?}; from it to the exit: {:?}",
+            hook.saturating_duration_since(asked),
+            exited.saturating_duration_since(hook)
+        );
+    }
+    if !(status.success() && stopped && took < Duration::from_millis(4500)) {
+        report(app, store, took);
+    }
+    assert!(status.success(), "asked to close, it ended with {status:?}");
+    assert!(
+        stopped,
+        "it exited without saying that the downloads stopped"
+    );
+    assert!(took < Duration::from_millis(4500), "closing took {took:?}");
+    // Which path stopped the downloads at the end of a Windows session:
+    // TDM's own hook (`tdm_platform::session`), or tao's handling that
+    // ends in `RunEvent::Exit` (both stop them the same way). Shown in the
+    // CI log (the step runs with --nocapture; review of #59).
+    #[cfg(windows)]
+    if matches!(how, Close::SessionEnd) {
+        let hook = app.said_at("asked to stop (the Windows session is ending)");
+        println!(
+            "the Windows session end was handled by {}",
+            if hook.is_some() {
+                "tdm_platform::session"
+            } else {
+                "tao (RunEvent::Exit)"
+            }
+        );
+        // Once everything is saved, the process is ended at once, not
+        // after WebView2 comes down (#81: that took seconds). Measured
+        // from the app's own line, so PowerShell's start is not counted.
+        assert!(
+            app.said("tdm: saved; terminating to finish the session end"),
+            "it did not say that everything was saved before ending"
+        );
+        let ended = exited.duration_since(hook.expect("TDM's own hook ran"));
+        println!("from the session end to the exit: {ended:?}");
+        assert!(
+            ended < Duration::from_millis(1500),
+            "the session end took {ended:?}"
+        );
+    }
+}
+
+/// What a failed close leaves to look at (#132): how long it took, the
+/// download as the queues file has it, its part and state files, and all
+/// the app said (its own times included).
+fn report(app: &App, store: &QueueStore, took: Duration) {
+    println!("---- the close failed after {took:?}; what is left ----");
+    let item = item(store);
+    println!(
+        "the download: {:?}, recorded {} bytes, state file {:?}",
+        item.status,
+        recorded(&item),
+        item.state_file
+    );
+    let age = |p: &Path| {
+        std::fs::metadata(p)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+    };
+    if let Some(state) = item.state_file.as_deref() {
+        println!("  state file written {:?} ago", age(state));
+        let part = std::path::PathBuf::from(
+            state
+                .to_string_lossy()
+                .replace(tdm_core::state::STATE_SUFFIX, tdm_core::state::PART_SUFFIX),
+        );
+        if let Ok(meta) = std::fs::metadata(&part) {
+            println!(
+                "  part file {part:?}: {} bytes, written {:?} ago",
+                meta.len(),
+                age(&part)
+            );
+        }
+    }
+    println!("---- all the app said ----\n{}", app.stderr.lock().unwrap());
+    println!("---- end ----");
+}
+
+/// How the app is asked to close.
+#[derive(Clone, Copy)]
+enum Close {
+    /// What the system does at a shutdown or when the window is closed:
+    /// SIGTERM on Linux and macOS, a window close on Windows.
+    Ask,
+    /// macOS: the system's quit event (Cmd+Q, the Dock's Quit, a logout).
+    #[cfg(target_os = "macos")]
+    Quit,
+    /// Windows: the session ends (a shutdown, restart or logoff), as the
+    /// system says it to the window: `WM_QUERYENDSESSION`, then
+    /// `WM_ENDSESSION` (#49). Sent through PowerShell, so the test needs no
+    /// unsafe code; a real shutdown cannot be run by a test.
+    #[cfg(windows)]
+    SessionEnd,
+}
+
+/// Asks the app to close, and gives back when the request went out: the
+/// close is timed from there. For a session end, that is once PowerShell
+/// has started and compiled its sender, which on a busy runner took up to
+/// 12.3 s of a 12.4 s close (#258, #284) before any message reached TDM.
+fn ask_to_close(child: &Child, how: Close) -> Instant {
+    let pid = child.id().to_string();
+    let asked = Instant::now();
+    let status = match how {
+        #[cfg(unix)]
+        Close::Ask => Command::new("kill").args(["-TERM", &pid]).status(),
+        #[cfg(windows)]
+        Close::Ask => Command::new("taskkill").args(["/PID", &pid]).status(),
+        // As Windows does at a real shutdown: both messages to every
+        // top-level window of the process (tao's hidden one, the main
+        // window...), not only to the one `MainWindowHandle` picks
+        // (review of #59).
+        #[cfg(windows)]
+        Close::SessionEnd => return send_session_end(child.id()).0,
+        #[cfg(target_os = "macos")]
+        Close::Quit => Command::new("osascript")
+            .args([
+                "-l",
+                "JavaScript",
+                "-e",
+                &format!(
+                    "ObjC.import('AppKit'); $.NSRunningApplication.runningApplicationWithProcessIdentifier({pid}).terminate"
+                ),
+            ])
+            .status(),
+    };
+    assert!(status.expect("the close request is sent").success());
+    asked
+}
+
+/// Sends the session end to every top-level window of process `pid`, as
+/// Windows does at a shutdown (see [`Close::SessionEnd`]), and gives back
+/// when the first message went out and what the sender said: a line per
+/// window and message, with how long the window took to answer (#244).
+///
+/// PowerShell compiles the sender first, says `ready`, and sends only when
+/// the test answers: its own start is then outside the time the test
+/// measures (#258).
+#[cfg(windows)]
+fn send_session_end(pid: u32) -> (Instant, String) {
+    let started = Instant::now();
+    let mut sender = Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                &format!(
+                    "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; \
+                     Add-Type -TypeDefinition 'using System; using System.Collections.Generic; using System.Runtime.InteropServices; \
+                     public static class TDMSession {{ \
+                       public delegate bool EnumProc(IntPtr h, IntPtr l); \
+                       [DllImport(\"user32.dll\", CharSet = CharSet.Unicode)] public static extern int GetClassNameW(IntPtr h, System.Text.StringBuilder s, int n); \
+                       [DllImport(\"user32.dll\", CharSet = CharSet.Unicode)] public static extern int GetWindowTextW(IntPtr h, System.Text.StringBuilder s, int n); \
+                       [DllImport(\"user32.dll\")] public static extern bool EnumWindows(EnumProc f, IntPtr l); \
+                       [DllImport(\"user32.dll\")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid); \
+                       [DllImport(\"user32.dll\")] public static extern IntPtr SendMessageTimeoutW(IntPtr h, uint m, IntPtr w, IntPtr l, uint f, uint t, out IntPtr r); \
+                       static void Timed(string name, IntPtr h, uint m, IntPtr w, uint limit) {{ \
+                         var c = new System.Text.StringBuilder(256); GetClassNameW(h, c, 256); var title = new System.Text.StringBuilder(256); GetWindowTextW(h, title, 256); uint p; uint t = GetWindowThreadProcessId(h, out p); \
+                         var clock = System.Diagnostics.Stopwatch.StartNew(); IntPtr r; IntPtr ok = SendMessageTimeoutW(h, m, w, IntPtr.Zero, 2, limit, out r); \
+                         Console.WriteLine(\"  \" + name + \" to \" + h + \" (\" + c + \" [\" + title + \"], thread \" + t + \"): \" + clock.ElapsedMilliseconds + \" ms, \" + (ok == IntPtr.Zero ? \"no answer\" : \"answered \" + r)); }} \
+                       public static void Send(uint pid) {{ \
+                         var all = new List<IntPtr>(); \
+                         EnumWindows((h, l) => {{ uint p; GetWindowThreadProcessId(h, out p); if (p == pid) all.Add(h); return true; }}, IntPtr.Zero); \
+                         Console.WriteLine(\"sending the session end to \" + all.Count + \" top-level windows\"); \
+                         foreach (var h in all) Timed(\"WM_QUERYENDSESSION\", h, 0x11, IntPtr.Zero, 5000); \
+                         foreach (var h in all) Timed(\"WM_ENDSESSION\", h, 0x16, (IntPtr)1, 10000); \
+                         Console.WriteLine(\"session end sent to \" + all.Count + \" top-level windows\"); if (all.Count == 0) Environment.Exit(1); }} }}'; \
+                     [Console]::WriteLine('ready'); [void][Console]::In.ReadLine(); \
+                     [TDMSession]::Send({pid})"
+                ),
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("PowerShell starts");
+    let mut out = BufReader::new(sender.stdout.take().unwrap());
+    let mut line = String::new();
+    while line.trim_end() != "ready" {
+        line.clear();
+        let read = out.read_line(&mut line).expect("PowerShell's output");
+        assert!(read > 0, "PowerShell ended before its sender was ready");
+    }
+    println!(
+        "PowerShell's sender was ready after {:?}",
+        started.elapsed()
+    );
+    let sent = Instant::now();
+    // The answer, and the end of its input once dropped.
+    writeln!(sender.stdin.take().unwrap(), "go").expect("the sender is told to send");
+    let mut said = String::new();
+    out.read_to_string(&mut said).expect("PowerShell's output");
+    let output = sender.wait_with_output().expect("PowerShell ends");
+    print!("{said}");
+    eprint!("{}", String::from_utf8_lossy(&output.stderr));
+    assert!(output.status.success(), "the session end was not sent");
+    (sent, said)
+}
+
+fn wait_exit(child: &mut Child, within: Duration) -> ExitStatus {
+    let deadline = Instant::now() + within;
+    loop {
+        if let Some(status) = child.try_wait().expect("the app's status") {
+            return status;
+        }
+        if Instant::now() > deadline {
+            let _ = child.kill();
+            panic!("the app did not exit within {within:?}");
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// The one download, read from the files as another process would.
+fn item(store: &QueueStore) -> Item {
+    let queues = store.load().expect("the queues file");
+    queues
+        .queues
+        .iter()
+        .flat_map(|q| q.items.clone())
+        .next()
+        .expect("one download")
+}
+
+/// The bytes its state file says are on disk.
+fn recorded(item: &Item) -> u64 {
+    item.state_file
+        .as_deref()
+        .and_then(|p| DownloadState::load(p).ok())
+        .map_or(0, |s| s.bytes_done())
+}
+
+fn wait_until(what: &str, within: Duration, mut done: impl FnMut() -> bool) {
+    let deadline = Instant::now() + within;
+    while !done() {
+        assert!(Instant::now() < deadline, "{what}: not within {within:?}");
+        std::thread::sleep(Duration::from_millis(200));
+    }
+}
+
+/// `None`: killed; otherwise closed that way.
+fn close_in_the_middle_then_open_again(close: Option<Close>) {
+    let kill = close.is_none();
+    let server = TestServer::http();
+    let body = random_bytes(SIZE as usize, if kill { 46 } else { 45 });
+    server.put("/big.bin", FileSpec::new(body.clone()).throttle(256 * 1024));
+    let data = tempfile::tempdir().unwrap();
+    let downloads = tempfile::tempdir().unwrap();
+    let store = QueueStore::new(data.path());
+    store
+        .update(|q| q.add("main", &server.url("/big.bin"), downloads.path()))
+        .unwrap();
+
+    let mut app = start(data.path());
+    wait_until("2 MiB recorded", Duration::from_secs(90), || {
+        recorded(&item(&store)) >= 2 * MIB
+    });
+    if kill {
+        app.child.kill().expect("the app is killed");
+        wait_exit(&mut app.child, Duration::from_secs(30));
+    } else if let Some(how) = close {
+        close_cleanly(&mut app, how, &store);
+    }
+    let before = item(&store);
+    let progress = recorded(&before);
+    assert_ne!(before.status, Status::Done);
+    assert!(
+        (2 * MIB..SIZE).contains(&progress),
+        "recorded {progress} of {SIZE}"
+    );
+    let requests_before = server.gets("/big.bin").len();
+
+    // Opened again, it goes on without being asked.
+    let mut app = start(data.path());
+    wait_until("the download finished", Duration::from_secs(120), || {
+        item(&store).status == Status::Done
+    });
+    close_cleanly(&mut app, Close::Ask, &store);
+
+    let done = item(&store);
+    let file = done.file.as_deref().expect("the finished file");
+    assert_eq!(
+        sha256_hex(&std::fs::read(file).unwrap()),
+        sha256_hex(&body),
+        "the file is whole"
+    );
+    // From the recorded progress, not from the start: every request after
+    // opening again asked for a range, and together they sent no more than
+    // what was missing (a margin of 1 MiB for a part re-asked at a split).
+    let after: Vec<_> = server.gets("/big.bin").split_off(requests_before);
+    assert!(!after.is_empty());
+    assert!(after.iter().all(|r| r.range.is_some()), "{after:?}");
+    let sent: u64 = after.iter().map(|r| r.bytes_sent).sum();
+    assert!(
+        sent <= SIZE - progress + MIB,
+        "sent {sent} after opening again; {} were missing",
+        SIZE - progress
+    );
+}
+
+#[test]
+#[ignore = "needs the built app (TDM_DESKTOP_APP); run by CI after the build"]
+fn closed_during_a_download_it_goes_on_when_opened_again() {
+    close_in_the_middle_then_open_again(Some(Close::Ask));
+}
+
+/// macOS: Cmd+Q, the Dock's Quit and a logout send the system's quit event,
+/// which ends the program without asking it (review of #45).
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "needs the built app (TDM_DESKTOP_APP); run by CI after the build"]
+fn quit_during_a_download_it_goes_on_when_opened_again() {
+    close_in_the_middle_then_open_again(Some(Close::Quit));
+}
+
+/// Windows: a shutdown, restart or logoff during a download (#49).
+#[cfg(windows)]
+#[test]
+#[ignore = "needs the built app (TDM_DESKTOP_APP); run by CI after the build"]
+fn session_end_during_a_download_it_goes_on_when_opened_again() {
+    close_in_the_middle_then_open_again(Some(Close::SessionEnd));
+}
+
+#[test]
+#[ignore = "needs the built app (TDM_DESKTOP_APP); run by CI after the build"]
+fn killed_during_a_download_it_goes_on_when_opened_again() {
+    close_in_the_middle_then_open_again(None);
+}
+
+/// Windows: closing the window during a download hides TDM into the
+/// tray; it keeps running and the download keeps going (owner's decision
+/// after #105, #109).
+#[cfg(windows)]
+#[test]
+#[ignore = "needs the built app (TDM_DESKTOP_APP); run by CI after the build"]
+fn closing_the_window_keeps_the_download_going() {
+    let server = TestServer::http();
+    server.put(
+        "/big.bin",
+        FileSpec::new(random_bytes(SIZE as usize, 47)).throttle(256 * 1024),
+    );
+    let data = tempfile::tempdir().unwrap();
+    let downloads = tempfile::tempdir().unwrap();
+    let store = QueueStore::new(data.path());
+    store
+        .update(|q| q.add("main", &server.url("/big.bin"), downloads.path()))
+        .unwrap();
+
+    let mut app = start_with(data.path(), false);
+    wait_until("2 MiB recorded", Duration::from_secs(90), || {
+        recorded(&item(&store)) >= 2 * MIB
+    });
+    ask_to_close(&app.child, Close::Ask);
+    let closed = recorded(&item(&store));
+    // Still running, and still downloading: more is recorded after the
+    // close than before it.
+    wait_until(
+        "more recorded after the close",
+        Duration::from_secs(60),
+        || recorded(&item(&store)) >= closed + 2 * MIB,
+    );
+    assert!(
+        app.child.try_wait().expect("the app's status").is_none(),
+        "closing the window ended TDM"
+    );
+    assert!(!app.said("tdm: the downloads stopped; exiting"));
+}
+
+/// Windows: the session ends while «Download complete» is open (#244: the
+/// close took 14.7 s once with a sixth window open). Every window of TDM
+/// answers both messages at once, as a shutdown waits for each, and TDM
+/// ends quickly.
+#[cfg(windows)]
+#[test]
+#[ignore = "needs the built app (TDM_DESKTOP_APP); run by CI after the build"]
+fn session_end_with_download_complete_open_is_answered_at_once() {
+    let server = TestServer::http();
+    server.put("/small.bin", FileSpec::new(random_bytes(256 * 1024, 48)));
+    let data = tempfile::tempdir().unwrap();
+    let downloads = tempfile::tempdir().unwrap();
+    let store = QueueStore::new(data.path());
+    store
+        .update(|q| q.add("main", &server.url("/small.bin"), downloads.path()))
+        .unwrap();
+    let mut app = start(data.path());
+    wait_until("the download finished", Duration::from_secs(60), || {
+        item(&store).status == Status::Done
+    });
+    // «Download complete» opens beside the main window once it is done.
+    std::thread::sleep(Duration::from_secs(3));
+
+    let (asked, said) = send_session_end(app.child.id());
+    let status = wait_exit(&mut app.child, Duration::from_secs(30));
+    let took = asked.elapsed();
+    println!("closing took {took:?}");
+    assert!(
+        said.contains("[Download complete]") || said.contains("[اكتمل التحميل]"),
+        "«Download complete» was not open"
+    );
+    // A window that answers late holds a shutdown back: none may take a
+    // second (a window already gone answers nothing, at once).
+    let slow: Vec<&str> = said
+        .lines()
+        .filter(|l| l.contains("WM_"))
+        .filter(|l| {
+            l.split("): ")
+                .nth(1)
+                .and_then(|rest| rest.split(" ms").next())
+                .and_then(|ms| ms.trim().parse::<u64>().ok())
+                .is_none_or(|ms| ms >= 1000)
+        })
+        .collect();
+    assert!(slow.is_empty(), "windows answered late: {slow:#?}");
+    assert!(status.success(), "it ended with {status:?}");
+    assert!(app.said("tdm: saved; terminating to finish the session end"));
+}
+
+/// A download going, with the app started so that it closes its main window
+/// into the tray `close` seconds after its page is up, through the close
+/// button's own path, and shows it again `show` seconds later
+/// (`TDM_MEASURE=tray`).
+#[cfg(not(target_os = "linux"))]
+fn start_closing_into_the_tray(
+    seed: u64,
+    close: u64,
+    show: u64,
+) -> (
+    TestServer,
+    tempfile::TempDir,
+    tempfile::TempDir,
+    QueueStore,
+    App,
+) {
+    let server = TestServer::http();
+    server.put(
+        "/big.bin",
+        FileSpec::new(random_bytes(SIZE as usize, seed)).throttle(256 * 1024),
+    );
+    server.put(
+        "/small.bin",
+        FileSpec::new(random_bytes(64 * 1024, seed + 100)),
+    );
+    let data = tempfile::tempdir().unwrap();
+    let downloads = tempfile::tempdir().unwrap();
+    let store = QueueStore::new(data.path());
+    store
+        .update(|q| q.add("main", &server.url("/big.bin"), downloads.path()))
+        .unwrap();
+    let times = format!("{close},{show}");
+    let app = start_with_env(
+        data.path(),
+        false,
+        &[("TDM_MEASURE", "tray"), ("TDM_MEASURE_TRAY", &times)],
+    );
+    (server, data, downloads, store, app)
+}
+
+/// Closed into the tray, the main window is freed with its page (owner's
+/// request for 1.2.3: the page took most of TDM's memory), the download
+/// goes on without it, and shown again the window is made again, its page
+/// reading the list and everything again. Not on Linux: CI's desktop has
+/// no tray, and closing quits there (`closing.rs`); the same code runs.
+#[cfg(not(target_os = "linux"))]
+#[test]
+#[ignore = "needs the built app (TDM_DESKTOP_APP); run by CI after the build"]
+fn the_main_window_is_freed_in_the_tray_and_comes_back() {
+    let (server, _data, downloads, store, mut app) = start_closing_into_the_tray(49, 3, 12);
+    wait_until("the main window freed", Duration::from_secs(60), || {
+        app.said("tdm: the main window is freed while TDM runs in the tray")
+    });
+    let freed = recorded(&item(&store));
+    // A small download that finishes meanwhile is said with no page: its
+    // notification and its sound (`in_tray.rs`).
+    store
+        .update(|q| q.add("main", &server.url("/small.bin"), downloads.path()))
+        .unwrap();
+    wait_until(
+        "a finished one said in the tray",
+        Duration::from_secs(60),
+        || {
+            app.said("tdm: in the tray: ")
+                && app.said("finished or failed (notifications on, sound Some(\"done\"))")
+        },
+    );
+    // The download goes on with no window: on, or done (its state file
+    // goes then).
+    wait_until(
+        "more recorded with the window freed",
+        Duration::from_secs(60),
+        || {
+            let big = item(&store);
+            big.status == Status::Done || recorded(&big) >= freed + MIB
+        },
+    );
+    assert!(
+        app.child.try_wait().expect("the app's status").is_none(),
+        "freeing the window ended TDM"
+    );
+    assert!(!app.said("tdm: the downloads stopped; exiting"));
+    // Shown again: made again, and its page loads and reads the list.
+    wait_until(
+        "the main window made again",
+        Duration::from_secs(60),
+        || app.said("tdm: the main window is made again"),
+    );
+    wait_until("its page ready again", Duration::from_secs(60), || {
+        app.said_times("tdm: the window is ready") == 2
+    });
+    assert!(app.child.try_wait().expect("the app's status").is_none());
+}
+
+/// Windows: the session ends while the main window is freed in the tray,
+/// so TDM shows no window at all: its own hidden window hears the end,
+/// and everything is saved before the process ends.
+#[cfg(windows)]
+#[test]
+#[ignore = "needs the built app (TDM_DESKTOP_APP); run by CI after the build"]
+fn session_end_with_the_main_window_freed_saves_everything() {
+    let (_server, _data, _downloads, store, mut app) = start_closing_into_the_tray(50, 3, 600);
+    wait_until("the main window freed", Duration::from_secs(60), || {
+        app.said("tdm: the main window is freed while TDM runs in the tray")
+    });
+    wait_until("2 MiB recorded", Duration::from_secs(90), || {
+        recorded(&item(&store)) >= 2 * MIB
+    });
+    let (_, said) = send_session_end(app.child.id());
+    let status = wait_exit(&mut app.child, Duration::from_secs(30));
+    println!("{said}");
+    assert!(
+        said.contains("TDMSessionEnd"),
+        "TDM's own window was not there"
+    );
+    assert!(status.success(), "it ended with {status:?}");
+    assert!(app.said("tdm: asked to stop (the Windows session is ending)"));
+    assert!(app.said("tdm: saved; terminating to finish the session end"));
+    let left = item(&store);
+    assert_ne!(left.status, Status::Done);
+    assert!(recorded(&left) >= 2 * MIB, "its progress was recorded");
+}

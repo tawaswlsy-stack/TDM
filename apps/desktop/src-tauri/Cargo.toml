@@ -1,0 +1,71 @@
+[package]
+name = "tdm-desktop"
+description = "TDM Download Manager: the desktop interface (Tauri 2)"
+version = "1.0.1"
+edition = "2024"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/tawaswlsy-stack/TDM"
+publish = false
+default-run = "tdm"
+
+# A workspace of its own: building the engine and the command line never
+# needs the GUI libraries (WebKitGTK on Linux). Every dependency is listed
+# in docs/DEPENDENCIES.md.
+[workspace]
+
+[lib]
+name = "tdm_desktop_lib"
+crate-type = ["rlib"]
+
+[[bin]]
+name = "tdm"
+path = "src/main.rs"
+
+[features]
+# Test pages and fixed demo data for the screenshots and the image test of
+# mixed names in CI. Never in a release build (checked in CI).
+ui-test = []
+
+[build-dependencies]
+tauri-build = { version = "2.7.4", features = [] }
+
+[dependencies]
+tauri = { version = "2.12.5", features = ["tray-icon", "image-png"] }
+tauri-plugin-autostart = "2.7.0"
+tauri-plugin-dialog = "2.8.3"
+tauri-plugin-notification = "2.7.0"
+tauri-plugin-opener = "2.7.0"
+# The schedule window's time of day (`schedule.rs`), as tdm-core's.
+jiff = "0.2.38"
+# Dragging a finished file out of «Download complete» (`complete.rs`).
+drag = "2.1.1"
+serde = { version = "1.0.229", features = ["derive"] }
+# The reports of the UI tests (`ui_test.rs`), and the tests.
+serde_json = "1.0.154"
+tokio = { version = "1.54.1", features = ["sync", "time", "rt-multi-thread", "macros", "signal"] }
+ts-rs = "12.0.1"
+tdm-core = { path = "../../../crates/tdm-core" }
+# The batch window's patterns (`batch.rs`), as `tdm batch`'s.
+tdm-grab = { path = "../../../crates/tdm-grab" }
+tdm-host = { path = "../../../crates/tdm-host" }
+tdm-i18n = { path = "../../../crates/tdm-i18n" }
+tdm-platform = { path = "../../../crates/tdm-platform" }
+tauri-plugin-single-instance = "2.5.4"
+# TDM's own signed update (ADR-0011, `update.rs`): Tauri's updater, our
+# own check of the signature with either of the project's two keys first,
+# and the key's id read from it.
+tauri-plugin-updater = "2.14.1"
+minisign-verify = "0.3.0"
+base64 = "0.23.1"
+
+[dev-dependencies]
+# Tauri's mock runtime, for the test that the UI test commands are not in
+# a release build.
+tauri = { version = "2.12.5", features = ["test"] }
+tempfile = "3.27.0"
+tdm-testserver = { path = "../../../crates/tdm-testserver" }
+
+# Whether the desktop shows tray icons (`closing.rs`): already in the tree
+# through tauri-plugin-notification, so no new crate.
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus = "5.19.0"
