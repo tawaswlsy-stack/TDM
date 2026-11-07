@@ -9,8 +9,8 @@
 # Read by crates/tdm-core/src/tools.rs (built in, read strictly: see
 # parse_pins there; a test reads this file).
 version 8.1.3-1
-windows-x86_64 ffmpeg-windows-x86_64.exe ee92fcf145cad67c30a63201edcd73ed2fd824a3b1102e1331b95965d1557fed
-windows-aarch64 ffmpeg-windows-aarch64.exe 05f6df0cc5ab2793a148d2ed75491cedd5c0755051483743b64528794b753bbf
+windows-x86_64 ffmpeg-windows-x86_64.exe b3ea3773f54a7b021b24fc3d9d03ff85d91a61ddab369c2c693d50a6ab0a23e7
+windows-aarch64 ffmpeg-windows-aarch64.exe 72e27b1f5f05a5c0b733a13d4029a3d71506ef49b4855a492c8bb4c54ed2443b
 macos-x86_64 ffmpeg-macos-universal 62bd4ed505b005aa1b050c15bd18ffbc343fd43504f43383e670c5e5e240e6c6
 macos-aarch64 ffmpeg-macos-universal 62bd4ed505b005aa1b050c15bd18ffbc343fd43504f43383e670c5e5e240e6c6
 linux-x86_64 ffmpeg-linux-x86_64 c8e819d025ca85742fc3ef200a2fa313d221c7cc71cde3cc55c108f622485a04

@@ -42,7 +42,7 @@
 
 اخترنا اسم **Tawaswl** لأن البرنامج يبقي تنزيلاتك متصلة ويستأنفها عند انقطاع الشبكة؛ ليصل ملفك كاملًا وسليمًا مهما كان مصدره.
 
-**[TDM 1.2.3](https://github.com/tawaswlsy-stack/TDM/releases/tag/v1.2.3) منشور،** وهو أخف: يترك نافذته وهو في شريط النظام (نحو 65 ميجابايت بدل 400 على ماك)، ويستهلك ذاكرة أقل والنافذة مفتوحة. وفي 1.2: التحديث التلقائي الموقّع بمفتاح المشروع (بموافقتك دائمًا)، واستكمال كل فيديو مهما كانت طريقة تنزيله، و«جودة الفيديو» لرابط يوتيوب تضيفه بيدك. وفي 1.1: جودات يوتيوب فورًا في زر الإضافة، يحمّلها محرّك TDM نفسه ويستكملها، والفيديو وقوائم التشغيل في الطوابير، وBrave وOpera وVivaldi، وشكل جديد بأيقونات ملونة. وما بعده في [ROADMAP](docs/ROADMAP.md).
+**[TDM 1.0.1](https://github.com/tawaswlsy-stack/TDM/releases/tag/v1.0.1) هو الإصدار الرسمي الأول على GitHub.** يحدّث معرّفات التطبيق وNative Messaging إلى مساحة أسماء المؤسسة، ويعرض اسم TDM وبريد التواصل الحالي. إصدار إضافة المتصفح مستقل عن إصدار التطبيق؛ النسخة المرفقة هي 1.2.7. تفاصيل التغييرات والتوافق في [ملاحظات الإصدار](docs/releases/v1.0.1.md) و[ADR-0001](docs/adr/0001-naming.md).
 
 ## ما يفعله TDM
 
@@ -151,7 +151,7 @@ TDM مشروع مستقل، ولا علاقة له بشركة Tonec ولا بب�
 
 We chose **Tawaswl** to reflect how the app keeps downloads connected and resumes them after a network drop, so your file arrives whole and sound.
 
-**[TDM 1.2.3](https://github.com/tawaswlsy-stack/TDM/releases/tag/v1.2.3) is out,** and lighter: it lets its window go while in the tray (about 65 MB instead of 400 on macOS), and takes less memory with the window open. From 1.2: signed automatic updates (always with your OK), every video resuming whichever way it downloads, and «Video quality» for a YouTube link you add by hand. From 1.1: YouTube's qualities at once in the extension's button, downloaded and resumed by TDM's own engine; videos and playlists in queues; Brave, Opera and Vivaldi; and a new look with coloured icons. What comes next is in the [ROADMAP](docs/ROADMAP.md).
+**[TDM 1.0.1](https://github.com/tawaswlsy-stack/TDM/releases/tag/v1.0.1) is the first official release on GitHub.** It updates the app and Native Messaging identifiers to the project namespace, and uses the current TDM name and support email. The browser extension has its own version; this release includes 1.2.7. See the [release notes](docs/releases/v1.0.1.md) and [ADR-0001](docs/adr/0001-naming.md) for changes and migration details.
 
 ## What TDM does
 

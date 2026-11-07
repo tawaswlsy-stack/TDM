@@ -43,9 +43,7 @@ fn source_of(tool: Tool, pin: Option<&tdm_core::tools::Pinned>) -> String {
         Tool::YtDlp => "https://github.com/yt-dlp/yt-dlp",
         Tool::QuickJs => "https://github.com/quickjs-ng/quickjs",
         // Our own build, with its exact source, on TDM's releases.
-        Tool::Ffmpeg | Tool::Ffprobe => {
-            "https://github.com/tawaswlsy-stack/TDM/releases"
-        }
+        Tool::Ffmpeg | Tool::Ffprobe => "https://github.com/tawaswlsy-stack/TDM/releases",
     }
     .into()
 }

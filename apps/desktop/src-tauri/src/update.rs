@@ -54,10 +54,10 @@ pub struct UpdateProgressView {
 }
 
 /// The newest release's update manifest (ADR-0011).
-const MANIFEST: &str = "https://github.com/tawaswlsy-stack/TDM/releases/latest/download/latest.json";
+const MANIFEST: &str =
+    "https://github.com/tawaswlsy-stack/TDM/releases/latest/download/latest.json";
 /// The only place an update's file may come from.
-const DOWNLOADS: &str =
-    "https://github.com/tawaswlsy-stack/TDM/releases/download/";
+const DOWNLOADS: &str = "https://github.com/tawaswlsy-stack/TDM/releases/download/";
 
 /// The project's two public keys (ADR-0011, section 3), as `tauri signer
 /// generate` writes them: the signing key, then the offline emergency key.
@@ -313,9 +313,7 @@ pub fn check_at_start(handle: &tauri::AppHandle) {
 pub fn found_for_test<R: tauri::Runtime>(handle: &tauri::AppHandle<R>, version: &str) {
     *handle.state::<Notice>().0.lock().unwrap() = Some(NewRelease {
         version: version.to_owned(),
-        page: format!(
-            "https://github.com/tawaswlsy-stack/TDM/releases/tag/v{version}"
-        ),
+        page: format!("https://github.com/tawaswlsy-stack/TDM/releases/tag/v{version}"),
     });
     let _ = handle.emit_to(
         "main",

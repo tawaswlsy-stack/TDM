@@ -15,7 +15,7 @@ host: string | null, size: number | null, done: number,
 /**
  * Bytes per second now (0 when not running).
  */
-speed: number, status: StatusView, phase: DownloadPhase | null, queue: string,
+speed: number, status: StatusView, phase: DownloadPhase | null, queue: string, 
 /**
  * The category id, from the name (and host).
  */
