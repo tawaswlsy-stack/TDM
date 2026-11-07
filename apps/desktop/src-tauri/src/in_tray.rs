@@ -162,8 +162,9 @@ fn changes(last: &mut HashMap<u64, (String, StatusView)>, now: &[DownloadView]) 
     });
     let mut finished = Vec::new();
     for d in now {
-        if let Some((_, before)) = last.get(&d.id)
-            && *before != d.status
+        if last
+            .get(&d.id)
+            .is_none_or(|(_, before)| *before != d.status)
             && matches!(d.status, StatusView::Done | StatusView::Failed)
         {
             finished.push((d.name.clone(), d.status == StatusView::Done));
@@ -444,6 +445,26 @@ mod tests {
             changes(&mut last, &[d(3, "night", StatusView::Failed)]),
             Said {
                 finished: vec![("f3.bin".into(), false)],
+                queue: false
+            }
+        );
+    }
+
+    #[test]
+    fn a_download_added_and_finished_between_looks_is_said() {
+        let mut last = HashMap::new();
+        changes(&mut last, &[d(1, "main", StatusView::Active)]);
+        assert_eq!(
+            changes(
+                &mut last,
+                &[
+                    d(1, "main", StatusView::Active),
+                    d(2, "main", StatusView::Done),
+                    d(3, "main", StatusView::Failed),
+                ],
+            ),
+            Said {
+                finished: vec![("f2.bin".into(), true), ("f3.bin".into(), false)],
                 queue: false
             }
         );

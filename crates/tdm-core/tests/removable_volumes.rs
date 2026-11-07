@@ -31,7 +31,10 @@ async fn downloads_finish_next_to_a_taken_name() {
     let server = TestServer::http();
     // 4 MiB: big enough to be split over several connections (M2).
     let data = random_bytes(4 << 20, 7);
-    server.put("/f.bin", FileSpec::new(data.clone()));
+    server.put(
+        "/f.bin",
+        FileSpec::new(data.clone()).content_type("application/zip"),
+    );
     let engine = Engine::new(Options::default()).unwrap();
 
     for (name, volume) in volumes() {

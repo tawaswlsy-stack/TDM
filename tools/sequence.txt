@@ -2,4 +2,4 @@
 # (ADR-0011, section 2): raised by one with every change of them. A
 # signed tools.json with a higher number replaces the pins built into an
 # older TDM; one with a lower or equal number is refused.
-1
+2
