@@ -36,8 +36,8 @@
       {/if}
     </span>
   </div>
-  <!-- svelte-ignore a11y_no_noninteractive_tabindex -- the scrollable region must accept keyboard focus. -->
-  <div class="body" tabindex="0">
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex -- the named scroll region must accept keyboard focus. -->
+  <div class="body" role="group" aria-labelledby="details-title" tabindex="0">
     <div class="main">
       <h2 id="details-title"><FileName name={d.name} /></h2>
       <p class="from">
