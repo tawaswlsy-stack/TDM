@@ -11,7 +11,9 @@
 # (the owner approves each run; its secrets are the signing key and its
 # password), with the key whose public half is built into TDM
 # (apps/desktop/src-tauri/update-keys/signing.pub), checked here before
-# anything is drafted.
+# anything is drafted. If the private key is not configured, CI still drafts
+# the installers and unsigned SHA256SUMS for manual installation; it omits
+# latest.json, so the app's automatic updater cannot use that release.
 #
 # Owner's decision (2026-10-25): TDM is not signed by Apple or Microsoft.
 # macOS gets an ad-hoc signature only; Windows is not signed.
@@ -435,10 +437,10 @@ jobs:
           node-version: "24"
           cache: npm
           cache-dependency-path: apps/desktop/package-lock.json
-      # Each update file and SHA256SUMS signed for this version (Tauri's
+      # Each update file and SHA256SUMS are signed for this version (Tauri's
       # signer, from the lock file), checked with minisign against the key
-      # built into TDM, then latest.json. No key yet (an empty
-      # signing.pub): no update files, the notice and release page only.
+      # built into TDM, then latest.json. Without the private key, keep the
+      # ordinary installers and checksum file for manual installation only.
       - name: Sign the update and write latest.json
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -451,7 +453,10 @@ jobs:
             echo "::warning::no signing key in TDM yet: no signed update in this release"
             exit 0
           fi
-          [ -n "$TAURI_SIGNING_PRIVATE_KEY" ] || { echo "::error::the release environment has no TAURI_SIGNING_PRIVATE_KEY"; exit 1; }
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "::warning::the release environment has no signing private key; this release is for manual installation only and will not include latest.json or signed checksums"
+            exit 0
+          fi
           (cd apps/desktop && npm ci --ignore-scripts --no-audit --no-fund)
           sudo apt-get install -y -q --no-install-recommends minisign
           key="$(base64 -d "$pub" | sed -n 2p)"
