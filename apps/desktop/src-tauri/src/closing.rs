@@ -198,11 +198,11 @@ pub fn watch<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) {
             return;
         }
         // `--close-quits` (the tests, and any script that closes the
-        // window to quit TDM): the window closes as before #109, and the
-        // program ends the way closing always ended it, the downloads
-        // recording their progress first; no question, which nobody would
-        // answer.
+        // window to quit TDM): go through the normal exit request, so
+        // downloads stop before the window is destroyed.
         if app.state::<Closing>().forced {
+            api.prevent_close();
+            app.exit(0);
             return;
         }
         api.prevent_close();

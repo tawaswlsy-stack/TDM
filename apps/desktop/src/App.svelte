@@ -1086,7 +1086,8 @@ import { patchRows } from "./lib/progressRows";
     <ExtensionBar />
     <VideoBar />
     {#if startupProblem}<p class="problem" role="alert">{startupProblem}</p>{/if}
-    <div class="body">
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex -- the scrollable region must accept keyboard focus. -->
+    <div class="body" tabindex="0">
     <Tree {snapshot} bind:filter bind:view />
     <main class="main">
       {#if view === "settings" && !settings}

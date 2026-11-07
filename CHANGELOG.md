@@ -19,6 +19,9 @@ Publisher-specific identifiers from historical build notes are omitted; current 
 ### Fixed
 
 - Corrected the Windows FFmpeg and ffprobe SHA-256 pins to match the verified binaries published with FFmpeg 8.1.3-1.
+- Reported tray notifications when a download was added and finished between status checks.
+- Made the details and refresh views' scrollable regions keyboard-focusable.
+- Routed a requested Windows close through the download-stop path before destroying the window.
 
 ## [0.0.8] - 2026-11-02
 
